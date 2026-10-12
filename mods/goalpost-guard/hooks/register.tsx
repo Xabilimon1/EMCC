@@ -506,7 +506,7 @@ export const register: Register = (on, options) => {
     if (verb === 'audit') {
       return { text: await audit($, rest[0] ?? 'HEAD', await detectOptions($, settings)) }
     }
-    const opened = await $.ui.open({ id: PANE, title: 'Goalpost Guard', focus: true })
+    const opened = await $.ui.open({ id: PANE, title: 'Goalpost Guard', focus: true, closeOnEscape: true })
     if (!opened.isPlaced) {
       const list = await read($, ledger)
 
@@ -626,7 +626,7 @@ export const register: Register = (on, options) => {
         {paused && <Text color={STONE}>paused </Text>}
         {held > 0 && <Text color={CLAY}>{held} held </Text>}
         {through > 0 && <Text color={OLIVE}>{through} let through </Text>}
-        <Button key="ledger" label="Ledger" onPress={() => $.ui.open({ id: PANE, title: 'Goalpost Guard', focus: true })} />
+        <Button key="ledger" label="Ledger" onPress={() => $.ui.open({ id: PANE, title: 'Goalpost Guard', focus: true, closeOnEscape: true })} />
       </Box>
     )
   })
@@ -649,7 +649,6 @@ export const register: Register = (on, options) => {
         <Button key="tab-exceptions" hotkey="2" label={`Exceptions ${standing.length}`} variant={shown === 'exceptions' ? 'primary' : undefined} onPress={() => update($, tab, () => 'exceptions')} />
         <Button key="tab-rules" hotkey="3" label="Rules" variant={shown === 'rules' ? 'primary' : undefined} onPress={() => update($, tab, () => 'rules')} />
         <Button key="pause" hotkey="p" label={paused ? 'Resume' : 'Pause'} onPress={() => update($, isPaused, value => !value)} />
-        <Button key="close" hotkey="q" label="Close" role="dismiss" onPress={() => $.ui.close({ id: PANE })} />
       </Box>
     )
     const status = (
@@ -699,19 +698,25 @@ export const register: Register = (on, options) => {
 
             return (
               <Box key={`rule-${category}`} gap={1}>
-                <Text color={isOn ? OLIVE : STONE} bold>
-                  {isOn ? 'on ' : 'off'}
-                </Text>
-                <Text color={isOn ? undefined : STONE}>{CATEGORY_LABEL[category]}</Text>
-                {isConfigured ? (
-                  <Button
-                    key={`toggle-${category}`}
-                    label={isOn ? 'Mute' : 'Unmute'}
-                    onPress={() => update($, muted, now => (now.includes(category) ? now.filter(one => one !== category) : [...now, category]))}
-                  />
-                ) : (
-                  <Text color={STONE}>(off in /config)</Text>
-                )}
+                <Box width={10}>
+                  {isConfigured ? (
+                    <Button
+                      key={`toggle-${category}`}
+                      label={isOn ? 'Mute' : 'Unmute'}
+                      onPress={() => update($, muted, now => (now.includes(category) ? now.filter(one => one !== category) : [...now, category]))}
+                    />
+                  ) : (
+                    <Text color={STONE}>/config</Text>
+                  )}
+                </Box>
+                <Box width={3}>
+                  <Text color={isOn ? OLIVE : STONE} bold>
+                    {isOn ? 'on' : 'off'}
+                  </Text>
+                </Box>
+                <Box flexGrow={1} flexShrink={1}>
+                  <Text color={isOn ? undefined : STONE}>{CATEGORY_LABEL[category]}</Text>
+                </Box>
               </Box>
             )
           })}

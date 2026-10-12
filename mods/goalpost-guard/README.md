@@ -49,11 +49,11 @@ In `claude -p` and other runs with no screen, nobody can answer the dialog, so `
 
 ## The ledger: `/goalposts`
 
-`/goalposts` opens a pane with three tabs (keys `1`, `2`, `3`; `p` pauses, `q` closes):
+`/goalposts` opens a pane with three tabs (keys `1`, `2`, `3`; `p` pauses, Esc closes):
 
 - **Ledger**: every decision this session, newest first: held, allowed, standing exception or noted, the file, what the change did, and the lines it removed (`-`) or added (`+`). A held change has an **Allow in this file** button.
 - **Exceptions**: the standing ones for this project, each with **Revoke**.
-- **Rules**: each family on or off. **Mute** turns one off for this session; `/config` turns it off for good.
+- **Rules**: each family on or off. **Mute** turns one off for this session; `/config` turns it off for good (a family off there shows `/config` instead of the button).
 
 **Pause** turns goalpost-guard off for the session, like `/goalposts pause` (`/goalposts resume` brings it back). Without emcc-core, a line above the prompt counts what was held and let through, with a **Ledger** button.
 

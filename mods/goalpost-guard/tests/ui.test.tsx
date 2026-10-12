@@ -65,11 +65,11 @@ describe('the pane', () => {
     }
   })
 
-  test('the tabs, Pause and Close answer to 1, 2, 3, p and q', async ($, on) => {
+  test('the tabs and Pause answer to 1, 2, 3 and p', async ($, on) => {
     world(on)
     for (const surface of SURFACES) {
       const ui = await $.ui.mount({ plugin: 'goalpost-guard', surface, ...PANE } as never)
-      const keys: Record<string, string> = { 'tab-ledger': '1', 'tab-exceptions': '2', 'tab-rules': '3', pause: 'p', close: 'q' }
+      const keys: Record<string, string> = { 'tab-ledger': '1', 'tab-exceptions': '2', 'tab-rules': '3', pause: 'p' }
       for (const [key, hotkey] of Object.entries(keys)) {
         expect((await ui.find({ key }))?.props.hotkey).toBe(hotkey)
       }
@@ -144,7 +144,7 @@ describe('the pane', () => {
     const ui = await $.ui.mount({ plugin: 'goalpost-guard', surface: 'terminal', ...PANE } as never)
     await ui.press({ key: 'tab-rules' })
     expect(await ui.find({ key: 'toggle-coverage' })).toBeUndefined()
-    expect(await ui.find({ type: 'Text', text: '(off in /config)' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '/config' })).toBeDefined()
     await ui.unmount()
   })
 
