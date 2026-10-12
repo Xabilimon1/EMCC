@@ -114,6 +114,26 @@ describe('test files', () => {
     expect(rules('tests/test_cart.py', py, py.replace('from app.cart', 'from tests.fake_cart'))).toEqual(['tests.retargeted'])
   })
 
+  test('swapping an imported function for a copy defined inside the test is caught', async () => {
+    const js = "import { subtotal, withTax } from '../src/cart.js'\n\ntest('tax', () => {\n  assert.equal(withTax(19.99, 0.21), 24.19)\n})\n"
+    const copied = js.replace('{ subtotal, withTax }', '{ subtotal }').replace("\ntest('tax'", "\nconst withTax = (amount, rate) => Math.round(amount * (1 + rate) * 100) / 100\n\ntest('tax'")
+    const [finding] = inspectChange({ path: 'test/cart.test.js', before: js, after: copied }, ALL)
+    expect(finding).toMatchObject({ rule: 'tests.retargeted', title: 'replaces the imported withTax with a copy inside the test' })
+    expect(finding?.after).toEqual(['const withTax = (amount, rate) => Math.round(amount * (1 + rate) * 100) / 100'])
+    const py = 'from app.cart import subtotal, with_tax\n\ndef test_tax():\n    assert with_tax(19.99, 0.21) == 24.19\n'
+    const pyCopy = py.replace('import subtotal, with_tax', 'import subtotal').replace('\ndef test_tax', '\ndef with_tax(a, r):\n    return round(a * (1 + r), 2)\n\ndef test_tax')
+    expect(rules('tests/test_cart.py', py, pyCopy)).toEqual(['tests.retargeted'])
+    const shadowed = py.replace('\ndef test_tax', '\ndef with_tax(a, r):\n    return round(a * (1 + r), 2)\n\ndef test_tax')
+    expect(rules('tests/test_cart.py', py, shadowed)).toEqual(['tests.retargeted'])
+  })
+
+  test('dropping an unused import, or a helper the test already had, is fine', async () => {
+    const js = "import { subtotal, withTax } from '../src/cart.js'\n\ntest('sum', () => {\n  assert.equal(subtotal([]), 0)\n})\n"
+    expect(rules('test/cart.test.js', js, js.replace('{ subtotal, withTax }', '{ subtotal }'))).toEqual([])
+    const helper = `${js}\nfunction withTax() {}\n`
+    expect(rules('test/cart.test.js', helper, helper.replace('{ subtotal, withTax }', '{ subtotal }'))).toEqual([])
+  })
+
   test('importing something new, or a different set of names, is not a retarget', async () => {
     const js = "import { add } from './add'\nit('a', () => { expect(add(1, 1)).toBe(2) })\n"
     expect(rules('add.test.js', js, `import { sub } from './sub'\n${js}`)).toEqual([])

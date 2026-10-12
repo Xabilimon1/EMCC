@@ -133,6 +133,34 @@ function retargetedImports(before: string, after: string): Array<readonly [strin
   return pairs
 }
 
+/** The names an import line brings in: `{ a, b as c }`, a default, `* as x`, or Python's `import a, b`. */
+function importedNames(line: string): string[] {
+  const js = /^\s*import\s+(.+?)\s+from\b/.exec(line) ?? /^\s*(?:const|let|var)\s+(.+?)\s*=\s*require\b/.exec(line)
+  const py = /^\s*from\s+[\w.]+\s+import\s+\(?([^)#]+)/.exec(line)
+  const list = js?.[1] ?? py?.[1] ?? ''
+
+  return list
+    .replace(/[{}()]/g, ',')
+    .split(',')
+    .map(part => part.trim().split(/\s+as\s+|\s*:\s*/).pop()?.replace(/^\*\s*as\s+/, '').trim() ?? '')
+    .filter(name => /^[A-Za-z_$][\w$]*$/.test(name))
+}
+
+/**
+ * Names a test stopped importing and now defines itself: the code under test
+ * swapped for a copy that lives inside the test.
+ */
+function inlinedStandIns(before: string, after: string): string[] {
+  const names = (text: string): Set<string> =>
+    new Set(text.split('\n').filter(line => importTarget(line) !== null).flatMap(importedNames))
+  // Still imported counts too: in Python a later `def` shadows the import.
+  return [...names(before)].filter(name => {
+    const defined = new RegExp(`(?:^|\\n)\\s*(?:export\\s+)?(?:(?:const|let|var)\\s+${name}\\s*=|(?:async\\s+)?function\\s*\\*?\\s*${name}\\s*\\(|class\\s+${name}\\b|def\\s+${name}\\s*\\()`)
+
+    return defined.test(after) && !defined.test(before)
+  })
+}
+
 /** Every line of `before`, trimmed, that is not in `after` (counting repeats). */
 function removedLinesAll(before: string, after: string): string[] {
   const held = new Map<string, number>()
@@ -322,6 +350,17 @@ function testFindings(change: FileChange, testPattern?: RegExp): GoalpostFinding
       detail: 'the test now checks a different module than before; a stand-in can pass while the real code stays broken',
       before: retargeted.slice(0, SAMPLE).map(([line]) => line),
       after: retargeted.slice(0, SAMPLE).map(([, line]) => line),
+    })
+  }
+
+  const inlined = inlinedStandIns(code(before), code(after))
+  if (inlined.length > 0) {
+    found.push({
+      rule: 'tests.retargeted',
+      file: path,
+      title: `replaces the imported ${inlined.slice(0, 2).join(', ')} with a copy inside the test`,
+      detail: 'the test now checks its own copy of the code; the copy can pass while the real code stays broken',
+      after: addedLines(before, after, new RegExp(`\\b(?:${inlined.join('|')})\\b`)),
     })
   }
 

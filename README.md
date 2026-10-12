@@ -69,7 +69,7 @@ claude plugin install emcc-core@emcc --config profile=strict
 | Mod | What it does | What it can reach | Version |
 |---|---|---|---|
 | [`emcc-core`](mods/emcc-core) | The base the others build on. Records test, build, lint and typecheck runs and edits; draws one band above the prompt with the latest result of each and the badges other mods post; sets the profile (`standard`, `strict`, `off`); `/emcc-halt` turns every gate off. | No network, no files, no processes | 0.1.1 |
-| [`goalpost-guard`](mods/goalpost-guard) | Holds any edit or command that lowers the bar: removed, skipped or loosened tests, rewritten expected values, tests pointed at a stand-in, new suppressions, relaxed lint and type config, softened CI, lowered coverage, skipped git hooks. Asks you (or denies, or reports); remembers exceptions per file or project; puts what was let through in the commit as a `Goalpost-Change` trailer; `/goalposts audit` checks a branch. | Reads the files a change touches; runs `git` only for `/goalposts audit`; no network | 0.1.2 |
+| [`goalpost-guard`](mods/goalpost-guard) | Holds any edit or command that lowers the bar: removed, skipped or loosened tests, rewritten expected values, tests pointed at a stand-in, new suppressions, relaxed lint and type config, softened CI, lowered coverage, skipped git hooks. Asks you (or denies, or reports); remembers exceptions per file or project; puts what was let through in the commit as a `Goalpost-Change` trailer; `/goalposts audit` checks a branch. | Reads the files a change touches; runs `git` only for `/goalposts audit`; no network | 0.1.3 |
 
 ### Coming next
 
