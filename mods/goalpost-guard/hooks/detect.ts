@@ -19,6 +19,7 @@ const CATEGORY_OF: Record<GoalpostRule, GoalpostCategory> = {
   'tests.skipped': 'tests',
   'tests.focused': 'tests',
   'tests.loosened': 'tests',
+  'tests.expected': 'tests',
   'tests.snapshots': 'tests',
   'tests.narrowed': 'tests',
   suppressions: 'suppressions',
@@ -64,6 +65,49 @@ function addedLines(before: string, after: string, global: RegExp): string[] {
   }
 
   return added.slice(0, SAMPLE)
+}
+
+/**
+ * Assertion lines rewritten in place: a removed line and an added one that
+ * read the same once every number and string is blanked out, as when
+ * `toBe(24.19)` becomes `toBe(24)`.
+ */
+function rewrittenValues(before: string, after: string): Array<readonly [string, string]> {
+  const literal = /-?\d+(?:\.\d+)?(?:e-?\d+)?|'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|`(?:\\.|[^`\\])*`/g
+  const shape = (line: string): string => line.replace(literal, '_')
+  const single = new RegExp(ASSERTION.source)
+  const gone = removedLinesAll(before, after).filter(line => single.test(line))
+  const added = removedLinesAll(after, before).filter(line => single.test(line))
+  const pairs: Array<readonly [string, string]> = []
+  for (const line of gone) {
+    const index = added.findIndex(other => shape(other) === shape(line))
+    if (index >= 0) {
+      pairs.push([line, added[index] ?? ''] as const)
+      added.splice(index, 1)
+    }
+  }
+
+  return pairs
+}
+
+/** Every line of `before`, trimmed, that is not in `after` (counting repeats). */
+function removedLinesAll(before: string, after: string): string[] {
+  const held = new Map<string, number>()
+  for (const line of after.split('\n')) {
+    held.set(line.trim(), (held.get(line.trim()) ?? 0) + 1)
+  }
+  const removed: string[] = []
+  for (const line of before.split('\n')) {
+    const key = line.trim()
+    const left = held.get(key) ?? 0
+    if (left > 0) {
+      held.set(key, left - 1)
+    } else if (key !== '') {
+      removed.push(key)
+    }
+  }
+
+  return removed
 }
 
 /** The lines of `before` that match `pattern` and are gone from `after`. */
@@ -210,6 +254,18 @@ function testFindings(change: FileChange, testPattern?: RegExp): GoalpostFinding
       title: 'focuses a test (.only)',
       detail: `only the focused tests run, the rest are silently skipped`,
       after: addedLines(before, after, FOCUS),
+    })
+  }
+
+  const rewritten = rewrittenValues(code(before), code(after))
+  if (rewritten.length > 0) {
+    found.push({
+      rule: 'tests.expected',
+      file: path,
+      title: `changes the values in ${plural(rewritten.length, 'assertion')}`,
+      detail: 'an expected value moved; if it moved to what the code returns now, the test checks nothing',
+      before: rewritten.slice(0, SAMPLE).map(([was]) => was),
+      after: rewritten.slice(0, SAMPLE).map(([, now]) => now),
     })
   }
 

@@ -89,6 +89,21 @@ describe('test files', () => {
     expect(finding?.after).toEqual(['expect(add(1, 2)).toBeDefined()'])
   })
 
+  test('rewriting the expected value of an assertion is caught, with both lines', async () => {
+    const node = "test('tax', () => {\n  assert.equal(withTax(19.99, 0.21), 24.19)\n})\n"
+    const [finding] = inspectChange({ path: 'test/cart.test.js', before: node, after: node.replace('24.19)', '24)') }, ALL)
+    expect(finding).toMatchObject({ rule: 'tests.expected', title: 'changes the values in 1 assertion' })
+    expect(finding?.before).toEqual(['assert.equal(withTax(19.99, 0.21), 24.19)'])
+    expect(finding?.after).toEqual(['assert.equal(withTax(19.99, 0.21), 24)'])
+    expect(rules('src/add.test.ts', SPEC, SPEC.replace("toBe(0)\n  })", "toBe(1)\n  })"))).toEqual(['tests.expected'])
+    expect(rules('tests/test_f.py', 'def test_a():\n    assert f("x") == "y"\n', 'def test_a():\n    assert f("x") == "z"\n')).toEqual(['tests.expected'])
+  })
+
+  test('rewriting an assertion into a different one, or touching only other lines, is not a value change', async () => {
+    expect(rules('src/add.test.ts', SPEC, SPEC.replace('expect(add(0, 0)).toBe(0)', 'expect(add(0, 0)).toEqual(0)'))).toEqual([])
+    expect(rules('src/add.test.ts', SPEC, SPEC.replace("describe('add'", "describe('add numbers'"))).toEqual([])
+  })
+
   test('adding tests and assertions is never a finding', async () => {
     const more = SPEC.replace('    expect(add(-1, 1)).toBe(0)', '    expect(add(-1, 1)).toBe(0)\n    expect(add(-2, 1)).toBe(-1)')
     expect(rules('src/add.test.ts', SPEC, more)).toEqual([])
