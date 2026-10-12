@@ -67,7 +67,7 @@ drop zero case
 Goalpost-Change: src/add.test.js: removes 1 assertion (allowed by the user)
 ```
 
-Each change is reported once. A commit that fails keeps them for the next. Needs git 2.32 or later; turn it off with `commitTrailer`.
+Each change is reported once; a `git commit --amend` of that commit carries its trailers again, since an amend rewrites the message. A commit that fails keeps them for the next. Needs git 2.32 or later; turn it off with `commitTrailer`.
 
 ## Audit what is already there: `/goalposts audit [ref]`
 
@@ -113,4 +113,4 @@ Set them in `/config`, or at install with `--config key=value`.
 claude plugin test mods/goalpost-guard
 ```
 
-76 tests: the detectors (36), the gate, modes, options, exceptions, retargeted imports, trailers and audit (29), and the band and the pane on both terminal and desktop, plus the EMCC profile and badge (11). Each one was seen failing before it passed, by breaking the code it checks.
+77 tests: the detectors (36), the gate, modes, options, exceptions, retargeted imports, trailers and audit (30), and the band and the pane on both terminal and desktop, plus the EMCC profile and badge (11). Each one was seen failing before it passed, by breaking the code it checks.

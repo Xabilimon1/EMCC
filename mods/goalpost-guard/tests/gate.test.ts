@@ -220,6 +220,18 @@ describe('shell commands and commits', () => {
     expect(it.ran.filter(command => command.includes('--trailer')).length).toBe(2)
   })
 
+  test('an amend of the last commit carries its trailers again, plus any new ones', async ($, on) => {
+    const it = world(on)
+    await edit($)
+    await bash($, 'git commit -m "fix add"')
+    await bash($, 'git commit --amend -m "fix add\n\nCo-Authored-By: someone"')
+    expect(it.ran[2]).toBe(
+      "git commit --trailer 'Goalpost-Change: src/add.test.ts: removes 1 assertion (allowed by the user)' --amend -m \"fix add\n\nCo-Authored-By: someone\"",
+    )
+    await bash($, 'git commit -m "next"')
+    expect(it.ran[3]).toBe('git commit -m "next"')
+  })
+
   test('commitTrailer off leaves commits alone', { options: { commitTrailer: false } }, async ($, on) => {
     const it = world(on)
     await edit($)

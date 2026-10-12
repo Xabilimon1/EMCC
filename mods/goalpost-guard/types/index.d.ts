@@ -63,8 +63,8 @@ export type GoalpostEntry = {
   decision: GoalpostDecision
   /** Why the person allowed it, or what they told Claude to do instead. */
   note?: string
-  /** Set once a `git commit` carried it in a trailer. */
-  isReported?: boolean
+  /** When a `git commit` carried it in a trailer (session clock); an amend of that commit carries it again. */
+  reportedAt?: number
 }
 
 /**

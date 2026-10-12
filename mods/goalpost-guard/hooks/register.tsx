@@ -409,6 +409,7 @@ function heldForError(error: unknown): Verdict {
 // ---------------------------------------------------------------- commit trailers
 
 const COMMIT = /\bgit\b(?:\s+-[cC]\s+\S+)*\s+commit\b/g
+const AMEND = /\bgit\b(?:\s+-[cC]\s+\S+)*\s+commit\b[^;&|]*\s--amend\b/
 
 function quoted(text: string): string {
   return `'${text.replace(/'/g, `'\\''`)}'`
@@ -589,14 +590,18 @@ export const register: Register = (on, options) => {
     }
 
     const cwd = await $.session.cwd()
-    const unreported = settings.isTrailerOn
-      ? (await read($, ledger)).filter(entry => entry.decision !== 'blocked' && entry.isReported !== true).slice(-TRAILERS)
-      : []
-    const rewritten = unreported.length > 0 ? withTrailers(e.command, unreported, cwd) : null
+    const listed = settings.isTrailerOn ? await read($, ledger) : []
+    const pending = listed.filter(entry => entry.decision !== 'blocked' && entry.reportedAt === undefined)
+    // An amend rewrites the last commit's message: carry that commit's trailers over to it.
+    const lastAt = Math.max(-1, ...listed.map(entry => entry.reportedAt ?? -1))
+    const again = AMEND.test(e.command) && lastAt >= 0 ? listed.filter(entry => entry.reportedAt === lastAt) : []
+    const reported = [...again, ...pending].slice(-TRAILERS)
+    const rewritten = reported.length > 0 ? withTrailers(e.command, reported, cwd) : null
     const ran = await next(rewritten === null ? e : { ...e, command: rewritten })
     if (rewritten !== null && ran.deny === undefined && ran.isError !== true) {
-      const done = new Set(unreported.map(entry => entry.id))
-      await update($, ledger, list => list.map(entry => (done.has(entry.id) ? { ...entry, isReported: true } : entry)))
+      const done = new Set(reported.map(entry => entry.id))
+      const at = await $.clock.now()
+      await update($, ledger, list => list.map(entry => (done.has(entry.id) ? { ...entry, reportedAt: at } : entry)))
     }
     if (verdict.kind === 'warn' && ran.deny === undefined) {
       return { ...ran, context: [...(ran.context ?? []), verdict.note] }
@@ -698,7 +703,7 @@ export const register: Register = (on, options) => {
 
             return (
               <Box key={`rule-${category}`} gap={1}>
-                <Box width={10}>
+                <Box width={10} flexShrink={0}>
                   {isConfigured ? (
                     <Button
                       key={`toggle-${category}`}
@@ -709,7 +714,7 @@ export const register: Register = (on, options) => {
                     <Text color={STONE}>/config</Text>
                   )}
                 </Box>
-                <Box width={3}>
+                <Box width={3} flexShrink={0}>
                   <Text color={isOn ? OLIVE : STONE} bold>
                     {isOn ? 'on' : 'off'}
                   </Text>
