@@ -20,6 +20,7 @@ const CATEGORY_OF: Record<GoalpostRule, GoalpostCategory> = {
   'tests.focused': 'tests',
   'tests.loosened': 'tests',
   'tests.expected': 'tests',
+  'tests.retargeted': 'tests',
   'tests.snapshots': 'tests',
   'tests.narrowed': 'tests',
   suppressions: 'suppressions',
@@ -81,6 +82,48 @@ function rewrittenValues(before: string, after: string): Array<readonly [string,
   const pairs: Array<readonly [string, string]> = []
   for (const line of gone) {
     const index = added.findIndex(other => shape(other) === shape(line))
+    if (index >= 0) {
+      pairs.push([line, added[index] ?? ''] as const)
+      added.splice(index, 1)
+    }
+  }
+
+  return pairs
+}
+
+const IMPORT_FORMS: readonly RegExp[] = [
+  /^(\s*(?:import|export)\b[^'"`]*?\bfrom\s*)(['"`])([^'"`]+)\2/,
+  /^(\s*import\s*)(['"`])([^'"`]+)\2/,
+  /^(.*?\brequire\s*\(\s*)(['"`])([^'"`]+)\2/,
+  /^(\s*from\s+)()([\w.]+)(?=\s+import\b)/,
+  /^(\s*import\s+)()([\w.]+)\s*$/,
+]
+
+/** The module an import line loads, and the line with that module blanked out. */
+export function importTarget(line: string): { target: string; shape: string } | null {
+  for (const form of IMPORT_FORMS) {
+    const match = form.exec(line)
+    if (match) {
+      return { target: match[3] ?? '', shape: line.replace(form, (_all, lead: string, quote: string) => `${lead}${quote}_${quote}`) }
+    }
+  }
+
+  return null
+}
+
+/**
+ * Imports that now load the same names from a different module: a test
+ * pointed at a stand-in instead of the code it was written for. Whether the
+ * old module still exists (a stand-in) or was moved (a fix) is the hooks'
+ * call, since only they can look at the disk.
+ */
+function retargetedImports(before: string, after: string): Array<readonly [string, string]> {
+  const gone = removedLinesAll(before, after).filter(line => importTarget(line) !== null)
+  const added = removedLinesAll(after, before).filter(line => importTarget(line) !== null)
+  const pairs: Array<readonly [string, string]> = []
+  for (const line of gone) {
+    const shape = importTarget(line)?.shape
+    const index = added.findIndex(other => importTarget(other)?.shape === shape)
     if (index >= 0) {
       pairs.push([line, added[index] ?? ''] as const)
       added.splice(index, 1)
@@ -266,6 +309,19 @@ function testFindings(change: FileChange, testPattern?: RegExp): GoalpostFinding
       detail: 'an expected value moved; if it moved to what the code returns now, the test checks nothing',
       before: rewritten.slice(0, SAMPLE).map(([was]) => was),
       after: rewritten.slice(0, SAMPLE).map(([, now]) => now),
+    })
+  }
+
+  const retargeted = retargetedImports(code(before), code(after))
+  if (retargeted.length > 0) {
+    const [[was = '', is = ''] = []] = retargeted
+    found.push({
+      rule: 'tests.retargeted',
+      file: path,
+      title: `points the test at other code (${importTarget(was)?.target ?? '?'} → ${importTarget(is)?.target ?? '?'})`,
+      detail: 'the test now checks a different module than before; a stand-in can pass while the real code stays broken',
+      before: retargeted.slice(0, SAMPLE).map(([line]) => line),
+      after: retargeted.slice(0, SAMPLE).map(([, line]) => line),
     })
   }
 

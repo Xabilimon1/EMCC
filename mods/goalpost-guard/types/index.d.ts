@@ -19,6 +19,7 @@ export type GoalpostRule =
   | 'tests.focused'
   | 'tests.loosened'
   | 'tests.expected'
+  | 'tests.retargeted'
   | 'tests.snapshots'
   | 'tests.narrowed'
   | 'suppressions'

@@ -154,6 +154,31 @@ describe('modes and options', () => {
   })
 })
 
+describe('retargeted imports', () => {
+  const CART = "import { withTax } from '../src/cart.js'\n\ntest('tax', () => {\n  assert.equal(withTax(19.99, 0.21), 24.19)\n})\n"
+  const RETARGET = { file_path: '/repo/test/cart.test.js', old_string: '../src/cart.js', new_string: '../lib/cart.js' }
+
+  test('a test pointed at a stand-in while the real module is still there is held', async ($, on) => {
+    const it = world(on, { '/repo/test/cart.test.js': CART, '/repo/src/cart.js': 'export const withTax = () => 0\n' })
+    await edit($, RETARGET)
+    expect(it.asked).toEqual(['Goalpost Guard: this change test/cart.test.js points the test at other code (../src/cart.js → ../lib/cart.js). Allow it?'])
+  })
+
+  test('an import that follows a moved module is let through', async ($, on) => {
+    const it = world(on, { '/repo/test/cart.test.js': CART, '/repo/lib/cart.js': 'export const withTax = () => 0\n' })
+    await edit($, RETARGET)
+    expect(it.asked).toEqual([])
+    expect(it.ran.length).toBe(1)
+  })
+
+  test('python: the old module is looked up as a .py file or a package', async ($, on) => {
+    const py = 'from app.cart import with_tax\n\ndef test_tax():\n    assert with_tax(19.99, 0.21) == 24.19\n'
+    const it = world(on, { '/repo/tests/test_cart.py': py, '/repo/app/cart/__init__.py': '' })
+    await edit($, { file_path: '/repo/tests/test_cart.py', old_string: 'from app.cart', new_string: 'from tests.fake_cart' })
+    expect(it.asked.length).toBe(1)
+  })
+})
+
 describe('shell commands and commits', () => {
   test('--no-verify is held', async ($, on) => {
     const it = world(on)
@@ -225,6 +250,26 @@ describe('/goalposts audit', () => {
     expect(text).toContain('2 changes lower the bar since main')
     expect(text).toContain('src/add.test.ts removes 2 assertions')
     expect(text).toContain('src/new.ts adds @ts-ignore')
+  })
+
+  test('an import that followed a moved module is not reported; one pointed at a stand-in is', async ($, on) => {
+    const before = "import { withTax } from '../src/cart.js'\ntest('tax', () => {\n  assert.equal(withTax(1, 0), 1)\n})\n"
+    const it = world(on, { '/repo/test/cart.test.js': before.replace('../src/cart.js', '../lib/cart.js'), '/repo/lib/cart.js': '' })
+    on('process.run', (_$, e) => {
+      const argv = (e as { argv: string[] }).argv.join(' ')
+      const out = (stdout: string, exitCode = 0) => ({ value: { exitCode, stdout, stderr: '' } }) as never
+      if (argv === 'git diff --name-status -M main') {
+        return out('M\ttest/cart.test.js\n')
+      }
+      if (argv === 'git show main:test/cart.test.js') {
+        return out(before)
+      }
+
+      return out('')
+    })
+    expect(await goalposts($, 'audit main')).toBe('Nothing in the changes since main lowers the bar (1 files checked).')
+    it.files.set('/repo/src/cart.js', '')
+    expect(await goalposts($, 'audit main')).toContain('test/cart.test.js points the test at other code (../src/cart.js → ../lib/cart.js)')
   })
 
   test('says so when nothing lowers the bar, and when git fails', async ($, on) => {

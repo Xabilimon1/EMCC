@@ -64,8 +64,8 @@ describe('test files', () => {
   test('a deleted test case is caught, and moving code around is not', async () => {
     const without = SPEC.replace(/\n  it\('handles negatives'[\s\S]*?\n  \}\)\n/, '\n')
     expect(rules('src/add.test.ts', SPEC, without)).toEqual(['tests.removed', 'tests.assertions'])
-    const reordered = SPEC.replace("import { add } from './add'", "import { add } from '../src/add'")
-    expect(rules('src/add.test.ts', SPEC, reordered)).toEqual([])
+    const renamed = SPEC.replace("describe('add'", "describe('add numbers'")
+    expect(rules('src/add.test.ts', SPEC, renamed)).toEqual([])
   })
 
   test('skip, todo, xit and the python and go skips are caught', async () => {
@@ -102,6 +102,22 @@ describe('test files', () => {
   test('rewriting an assertion into a different one, or touching only other lines, is not a value change', async () => {
     expect(rules('src/add.test.ts', SPEC, SPEC.replace('expect(add(0, 0)).toBe(0)', 'expect(add(0, 0)).toEqual(0)'))).toEqual([])
     expect(rules('src/add.test.ts', SPEC, SPEC.replace("describe('add'", "describe('add numbers'"))).toEqual([])
+  })
+
+  test('pointing a test at a stand-in module is caught, in JS and Python', async () => {
+    const js = "import { subtotal, withTax } from '../src/cart.js'\n\ntest('tax', () => {\n  assert.equal(withTax(19.99, 0.21), 24.19)\n})\n"
+    const [finding] = inspectChange({ path: 'test/cart.test.js', before: js, after: js.replace('../src/cart.js', '../lib/cart.js') }, ALL)
+    expect(finding).toMatchObject({ rule: 'tests.retargeted', title: 'points the test at other code (../src/cart.js → ../lib/cart.js)' })
+    const cjs = "const { add } = require('./add')\nit('a', () => { expect(add(1, 1)).toBe(2) })\n"
+    expect(rules('add.test.js', cjs, cjs.replace("'./add'", "'./add-fixed'"))).toEqual(['tests.retargeted'])
+    const py = 'from app.cart import with_tax\n\ndef test_tax():\n    assert with_tax(19.99, 0.21) == 24.19\n'
+    expect(rules('tests/test_cart.py', py, py.replace('from app.cart', 'from tests.fake_cart'))).toEqual(['tests.retargeted'])
+  })
+
+  test('importing something new, or a different set of names, is not a retarget', async () => {
+    const js = "import { add } from './add'\nit('a', () => { expect(add(1, 1)).toBe(2) })\n"
+    expect(rules('add.test.js', js, `import { sub } from './sub'\n${js}`)).toEqual([])
+    expect(rules('add.test.js', js, js.replace("import { add } from './add'", "import { add, sub } from './add'"))).toEqual([])
   })
 
   test('adding tests and assertions is never a finding', async () => {

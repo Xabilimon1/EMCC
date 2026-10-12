@@ -8,7 +8,7 @@ import type {
   GoalpostException,
   GoalpostFinding,
 } from '../types'
-import { applyEdit, categoryOf, inspectChange, inspectCommand } from './detect'
+import { applyEdit, categoryOf, importTarget, inspectChange, inspectCommand } from './detect'
 import type { DetectOptions } from './detect'
 
 const PANE = 'goalposts'
@@ -320,6 +320,68 @@ async function decide(
   }
 }
 
+function normalized(path: string): string {
+  const parts: string[] = []
+  for (const part of path.split('/')) {
+    if (part === '..') {
+      parts.pop()
+    } else if (part !== '.' && part !== '') {
+      parts.push(part)
+    }
+  }
+
+  return `/${parts.join('/')}`
+}
+
+/** Where a module an import names could be on disk, relative to the file importing it. */
+function candidatesFor(file: string, target: string, cwd: string): string[] | null {
+  const dir = file.slice(0, file.lastIndexOf('/')) || cwd
+  if (target.startsWith('.') && target.includes('/')) {
+    const base = normalized(`${dir.startsWith('/') ? dir : `${cwd}/${dir}`}/${target}`)
+
+    return ['', '.js', '.ts', '.tsx', '.jsx', '.mjs', '.cjs', '/index.js', '/index.ts'].map(ext => `${base}${ext}`)
+  }
+  if (/^\.+\w/.test(target) || /^\w+(?:\.\w+)+$/.test(target)) {
+    const ups = target.match(/^\.*/)?.[0].length ?? 0
+    const root = ups === 0 ? cwd : normalized(`${dir.startsWith('/') ? dir : `${cwd}/${dir}`}${'/..'.repeat(Math.max(0, ups - 1))}`)
+    const base = `${root}/${target.slice(ups).replace(/\./g, '/')}`
+
+    return [`${base}.py`, `${base}/__init__.py`]
+  }
+
+  return null
+}
+
+/**
+ * Keeps a retargeted import only when the module the test used to load is
+ * still on disk: then the test was pointed away from real code. When it is
+ * gone, the code moved and the import followed it.
+ */
+async function withRealRetargets($: EngineInterface, found: GoalpostFinding[]): Promise<GoalpostFinding[]> {
+  const cwd = await $.session.cwd()
+  const kept: GoalpostFinding[] = []
+  for (const finding of found) {
+    const old = finding.rule === 'tests.retargeted' ? importTarget(finding.before?.[0] ?? '')?.target : undefined
+    const places = old === undefined || finding.file === undefined ? null : candidatesFor(finding.file, old, cwd)
+    if (places === null) {
+      kept.push(finding)
+      continue
+    }
+    let isThere = false
+    for (const place of places) {
+      if (await $.fs.exists(place)) {
+        isThere = true
+        break
+      }
+    }
+    if (isThere) {
+      kept.push(finding)
+    }
+  }
+
+  return kept
+}
+
 async function fileFindings(
   $: EngineInterface,
   path: string,
@@ -332,7 +394,7 @@ async function fileFindings(
     return []
   }
 
-  return inspectChange({ path, before, after }, options)
+  return withRealRetargets($, inspectChange({ path, before, after }, options))
 }
 
 function heldForError(error: unknown): Verdict {
@@ -405,7 +467,7 @@ async function audit($: EngineInterface, base: string, options: DetectOptions): 
     const shown = await $.process.run(['git', 'show', `${base}:${first}`])
     const before = status.startsWith('A') || shown.exitCode !== 0 ? null : shown.stdout
     const after = status.startsWith('D') || !(await $.fs.exists(path)) ? null : await $.fs.read(path)
-    found.push(...inspectChange({ path, before, after }, options))
+    found.push(...(await withRealRetargets($, inspectChange({ path, before, after }, options))))
   }
   if (found.length === 0) {
     return `Nothing in the changes since ${base} lowers the bar (${rows.length} files checked).`
