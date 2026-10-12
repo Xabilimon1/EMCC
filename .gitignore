@@ -1,3 +1,5 @@
 node_modules/
 .claude/types/
 .DS_Store
+# written by Claude Code when it loads a mod from a folder; points at its own generated types
+mods/*/tsconfig.json
