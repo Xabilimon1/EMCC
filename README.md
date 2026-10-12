@@ -1,33 +1,88 @@
-# EMCC — Every Mod Claude Code
+<h1 align="center">EMCC</h1>
 
-A curated, tested collection of [Claude Code mods](https://code.claude.com/docs/en/plugins/mods/overview).
+<p align="center">
+  <b>Every Mod Claude Code</b><br>
+  Claude Code mods that check the work was done, instead of taking Claude's word for it.
+</p>
 
-Skills tell Claude what discipline to follow. EMCC's mods check that it did, inside Claude Code and on screen: evidence of what actually ran, gates that hold, and one status band instead of ten.
+<p align="center">
+  <a href="https://github.com/Xabilimon1/EMCC/actions/workflows/ci.yml"><img src="https://github.com/Xabilimon1/EMCC/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2b2b2b?style=flat-square" alt="MIT license"></a>
+  <img src="https://img.shields.io/badge/Claude_Code-2.1.287%2B-2b2b2b?style=flat-square" alt="Claude Code 2.1.287 or later">
+</p>
 
-> **Status: early.** One mod so far (`emcc-core`), the base the rest of the catalog builds on. Tested with **Claude Code 2.1.287**. The mods API changes between releases, so every mod states the version it was tested with.
+<p align="center">
+  <a href="#install">Install</a>&emsp;&emsp;
+  <a href="#mods">Mods</a>&emsp;&emsp;
+  <a href="#what-a-mod-can-reach">What a mod can reach</a>&emsp;&emsp;
+  <a href="#quality-bar">Quality bar</a>&emsp;&emsp;
+  <a href="#build-on-emcc">Build on EMCC</a>
+</p>
+
+<!-- Demo slot: a recording of an EMCC mod at work goes here. -->
+
+"The tests pass" is a sentence. EMCC shows you what is behind it: which checks actually ran in this session, what they returned, and, as the catalog grows, gates that hold when the check a change needs never ran.
+
+## Why EMCC
+
+Skills tell Claude what discipline to follow. Nothing in a skill checks that Claude followed it. A [mod](https://code.claude.com/docs/en/plugins/mods/overview) runs inside Claude Code itself, so it can:
+
+- **Record what ran.** Every test, build, lint and typecheck command and its exit code, as the engine reported them, not as Claude summed them up.
+- **Hold the line.** Gates that ask you, or refuse, when Claude tries to pass by lowering the bar. They arrive with `goalpost-guard`, the next mod.
+- **Show it in one place.** One band above the prompt for every EMCC mod, instead of one line each.
+
+Every mod here has tests, states the Claude Code version it was tested with, and lists what it can reach.
 
 ## Install
+
+Inside Claude Code 2.1.287 or later:
+
+```
+/plugin marketplace add Xabilimon1/EMCC
+/plugin install emcc-core@emcc
+```
+
+Then run `/emcc` to see the profile and what EMCC has recorded so far. If Claude Code warns about the prompt cache and leaves the plugin pending, run `/reload-plugins --force` or start a new session.
+
+<details>
+<summary><b>From your shell</b></summary>
 
 ```sh
 claude plugin marketplace add Xabilimon1/EMCC
 claude plugin install emcc-core@emcc
 ```
 
-Or from inside Claude Code: `/plugin marketplace add Xabilimon1/EMCC`, then `/plugin install emcc-core@emcc`.
+The mod loads the next time you start Claude Code. In a session that is already open, run `/reload-plugins`.
+
+To pick the profile at install time:
+
+```sh
+claude plugin install emcc-core@emcc --config profile=strict
+```
+
+</details>
 
 ## Mods
 
-| Mod | What it does | Status |
+| Mod | What it does | What it can reach | Version |
+|---|---|---|---|
+| [`emcc-core`](mods/emcc-core) | The base the others build on. Records test, build, lint and typecheck runs and edits; draws one band above the prompt with the latest result of each and the badges other mods post; sets the profile (`standard`, `strict`, `off`); `/emcc-halt` turns every gate off. | No network, no files, no processes | 0.1.0 |
+
+### Coming next
+
+| Order | Mod | What it will do |
 |---|---|---|
-| [`emcc-core`](mods/emcc-core) | The `$.emcc` noun other mods build on: evidence of test, build, lint and typecheck runs and of edits; badges in one band above the prompt; a profile (`standard`, `strict`, `off`); a kill switch (`/emcc-halt`). | 0.1.0 |
+| 1 | `goalpost-guard` | Catches "passing" by lowering the bar: weakened or deleted tests, new suppressions, relaxed config, lowered CI thresholds. |
+| 2 | `redgreen` | TDD that only moves on when the test output says so: red first, then green. |
+| 3 | `cassette` | Records model replies once and replays a session offline, the same way every time. |
 
-Coming next, in order: `goalpost-guard` (stops "passing" by lowering the bar: weakened tests, suppressions, relaxed config, CI thresholds), `redgreen` (TDD that only advances on real test output), and `cassette` (record model replies once, replay sessions offline and deterministically).
+## What a mod can reach
 
-## Read this before installing any mod
+Mods run with the same access to your machine as Claude Code itself. They are not sandboxed: a mod can read files, run commands, and rewrite prompts and tool calls. Read a mod's source before you install it, from EMCC or anywhere else.
 
-Mods run with the same access to your machine as Claude Code itself. They are not sandboxed: a mod can read files, run commands, rewrite prompts and tool calls. Read a mod's source before you install it, from EMCC or anywhere else. Every EMCC mod lists what it hooks and calls in its README, and `claude plugin validate` prints the same list from the source.
+Every EMCC mod lists what it hooks and calls in its own README, and `claude plugin validate` prints the same list from the source, so you can check one against the other.
 
-Turn mods off any time with `/plugin disable <mod>`, `claude --safe-mode`, or `"disableAllHooks": true`.
+To turn mods off: `/plugin disable <mod>` for one, `claude --safe-mode` for a session, or `"disableAllHooks": true` in your settings.
 
 ## Quality bar
 
@@ -35,12 +90,27 @@ Every mod in EMCC:
 
 - passes `claude plugin validate --strict`
 - has tests run by `claude plugin test`, each one seen failing before it passed
-- draws on both the terminal and the desktop app where it draws at all, tested on both
-- says which Claude Code version it was tested with
+- draws on both the terminal and the desktop app wherever it draws, tested on both
+- states the Claude Code version it was tested with
 
 CI runs the first two on every push.
 
-## Developing
+## Build on EMCC
+
+`emcc-core` adds `$.emcc` to every mod's engine interface: the evidence it recorded, a slot in the shared band, the profile and the kill switch. Check that it exists first, since emcc-core may not be installed:
+
+```ts
+if ($.emcc) {
+  const test = await $.emcc.evidenceLatest({ kind: 'test' })
+  if ((await $.emcc.profile()) === 'strict' && !test?.isOk) {
+    return { deny: 'Run the tests first.' }
+  }
+}
+```
+
+The full API is in [`mods/emcc-core`](mods/emcc-core#for-mod-authors-emcc).
+
+### Developing
 
 ```sh
 claude plugin validate --strict .          # the marketplace and every mod
