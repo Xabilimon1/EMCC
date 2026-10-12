@@ -11,15 +11,24 @@ The base EMCC mods build on. Tested with **Claude Code 2.1.287**, terminal and d
 
 ## For mod authors: `$.emcc`
 
-Check that it exists first, since emcc-core may not be installed:
+emcc-core may not be installed, and `claude plugin validate` refuses a mod that reads `$.emcc` as a value (`if ($.emcc)`), so call a method and catch: with emcc-core missing, the call throws.
 
 ```ts
-if ($.emcc) {
+async function emccProfile($: EngineInterface): Promise<EmccProfile | null> {
+  try {
+    return await $.emcc.profile()
+  } catch {
+    return null // emcc-core is not installed
+  }
+}
+
+// in a hook
+const profile = await emccProfile($)
+if (profile === 'strict') {
   const test = await $.emcc.evidenceLatest({ kind: 'test' })
-  if ((await $.emcc.profile()) === 'strict' && !test?.isOk) {
+  if (!test?.isOk) {
     return { deny: 'Run the tests first.' }
   }
-  await $.emcc.badge({ id: 'my-mod', text: 'checked', tone: 'good' })
 }
 ```
 

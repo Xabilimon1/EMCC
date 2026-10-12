@@ -1,15 +1,37 @@
 {
   "name": "emcc",
-  "owner": { "name": "Xabilimon1", "url": "https://github.com/Xabilimon1" },
+  "owner": {
+    "name": "Xabilimon1",
+    "url": "https://github.com/Xabilimon1"
+  },
   "description": "EMCC (Every Mod Claude Code): a curated, tested collection of Claude Code mods.",
   "plugins": [
     {
       "name": "emcc-core",
       "source": "./mods/emcc-core",
       "description": "EMCC's shared base: the $.emcc noun (evidence, badges, profile, kill switch) and one status band above the prompt.",
+      "version": "0.1.1",
+      "category": "development",
+      "tags": [
+        "emcc",
+        "evidence",
+        "status",
+        "platform"
+      ]
+    },
+    {
+      "name": "goalpost-guard",
+      "source": "./mods/goalpost-guard",
+      "description": "Stops Claude from passing a check by lowering the bar: weakened or deleted tests, new suppressions, relaxed config, softened CI, lowered coverage, skipped git hooks.",
       "version": "0.1.0",
       "category": "development",
-      "tags": ["emcc", "evidence", "status", "platform"]
+      "tags": [
+        "emcc",
+        "tests",
+        "guard",
+        "quality",
+        "ci"
+      ]
     }
   ]
 }

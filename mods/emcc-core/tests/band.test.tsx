@@ -24,7 +24,7 @@ test('the band shows evidence and badges, and Halt turns EMCC off, on both surfa
     expect((await ui.find({ type: 'Text', text: /GREEN/ }))?.text).toBe('GREEN ')
     expect((await ui.find({ key: 'halt' }))?.text).toBe('Halt')
     await ui.press({ key: 'halt' })
-    expect(await ui.find({ type: 'Text', text: /EMCC halted/ })).toBeDefined()
+    expect((await ui.find({ type: 'Text', text: /^halted/ }))?.text).toBe('halted ')
     expect((await ui.find({ key: 'halt' }))?.text).toBe('Resume')
     await ui.press({ key: 'halt' })
     await ui.unmount()

@@ -10,11 +10,17 @@ const isHalted = atom({ plugin: 'emcc-core', key: 'isHalted' } as const, false)
 
 const KEEP = 200
 const SHOWN: readonly EmccEvidenceKind[] = ['test', 'typecheck', 'lint', 'build']
+// Anthropic's palette: olive for what holds, clay for what needs a look,
+// stone for everything secondary.
+const OLIVE = '#788c5d'
+const CLAY = '#d97757'
+const STONE = '#b0aea5'
+
 const TONE_COLOR: Record<EmccTone, string | undefined> = {
   neutral: undefined,
-  good: 'green',
-  warn: 'yellow',
-  bad: 'red',
+  good: OLIVE,
+  warn: CLAY,
+  bad: CLAY,
 }
 
 const PROFILES: readonly EmccProfile[] = ['standard', 'strict', 'off']
@@ -178,12 +184,19 @@ export const register: Register = (on, options) => {
 
     return (
       <Box>
-        <Text dimColor>EMCC {halted ? 'halted' : configured} </Text>
+        <Text color={CLAY} bold>
+          EMCC{' '}
+        </Text>
+        <Text color={STONE}>{halted ? 'halted' : configured} </Text>
         {facts.map(item => (
-          <Text color={item.isOk ? 'green' : 'red'}>{summaryOf(item)} </Text>
+          <Text color={item.isOk ? OLIVE : CLAY} bold={!item.isOk}>
+            {summaryOf(item)}{' '}
+          </Text>
         ))}
         {slots.map(slot => (
-          <Text color={TONE_COLOR[slot.tone]}>{slot.text} </Text>
+          <Text color={TONE_COLOR[slot.tone]} bold={slot.tone === 'bad'}>
+            {slot.text}{' '}
+          </Text>
         ))}
         <Button
           key="halt"

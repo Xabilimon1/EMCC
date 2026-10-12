@@ -1,0 +1,99 @@
+{
+  "name": "goalpost-guard",
+  "version": "0.1.0",
+  "description": "Stops Claude from passing a check by lowering the bar: weakened or deleted tests, new suppressions, relaxed config, softened CI, lowered coverage, skipped git hooks.",
+  "author": {
+    "name": "Xabilimon1",
+    "url": "https://github.com/Xabilimon1"
+  },
+  "repository": "https://github.com/Xabilimon1/EMCC",
+  "license": "MIT",
+  "keywords": [
+    "emcc",
+    "mods",
+    "tests",
+    "guard",
+    "quality"
+  ],
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "mode": {
+      "type": "string",
+      "title": "Mode",
+      "description": "What happens when a change lowers the bar: ask you, deny it, let it through and tell Claude to report it (warn), or nothing. inherit follows the EMCC profile (standard asks, strict denies), and asks without emcc-core",
+      "options": [
+        "inherit",
+        "ask",
+        "deny",
+        "warn",
+        "off"
+      ],
+      "default": "inherit"
+    },
+    "tests": {
+      "type": "boolean",
+      "title": "Guard tests",
+      "description": "Removed or loosened assertions, skipped or focused tests, deleted tests, rewritten snapshots, narrowed test runs",
+      "default": true
+    },
+    "suppressions": {
+      "type": "boolean",
+      "title": "Guard suppressions",
+      "description": "New @ts-ignore, eslint-disable, # noqa, # type: ignore, //nolint, #[allow], coverage ignores and the like",
+      "default": true
+    },
+    "config": {
+      "type": "boolean",
+      "title": "Guard lint and type config",
+      "description": "tsconfig strictness turned off, lint rules lowered or removed, mypy and ruff relaxed",
+      "default": true
+    },
+    "ci": {
+      "type": "boolean",
+      "title": "Guard CI",
+      "description": "continue-on-error, || true, allow_failure, removed check steps and pre-commit hooks",
+      "default": true
+    },
+    "coverage": {
+      "type": "boolean",
+      "title": "Guard coverage thresholds",
+      "description": "Lowered or removed coverage thresholds in jest, vitest, coverage.py, codecov and others",
+      "default": true
+    },
+    "bypass": {
+      "type": "boolean",
+      "title": "Guard git hooks",
+      "description": "git commit or push --no-verify, git commit -n, HUSKY=0, SKIP=, core.hooksPath",
+      "default": true
+    },
+    "headless": {
+      "type": "string",
+      "title": "With no one to ask",
+      "description": "In claude -p and other runs with no screen, ask mode cannot ask: deny the change, or allow it and have Claude report it",
+      "options": [
+        "deny",
+        "allow"
+      ],
+      "default": "deny"
+    },
+    "commitTrailer": {
+      "type": "boolean",
+      "title": "Report in commits",
+      "description": "Add a Goalpost-Change trailer to the next git commit for every change that was let through",
+      "default": true
+    },
+    "testPattern": {
+      "type": "string",
+      "title": "Extra test files",
+      "description": "A regular expression for test files with unusual names, on top of the usual ones (*.test.ts, test_*.py, *_test.go…)",
+      "default": ""
+    },
+    "ignorePaths": {
+      "type": "string",
+      "multiple": true,
+      "title": "Ignored paths",
+      "description": "Globs Goalpost Guard leaves alone, such as vendor/** or **/generated/**",
+      "default": []
+    }
+  }
+}
