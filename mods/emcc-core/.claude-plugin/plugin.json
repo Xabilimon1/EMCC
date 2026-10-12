@@ -1,0 +1,19 @@
+{
+  "name": "emcc-core",
+  "version": "0.1.0",
+  "description": "EMCC's shared base: the $.emcc noun (evidence of tests, builds, lints and edits; badges; profile; kill switch) and one status band above the prompt.",
+  "author": { "name": "Xabilimon1", "url": "https://github.com/Xabilimon1" },
+  "repository": "https://github.com/Xabilimon1/EMCC",
+  "license": "MIT",
+  "keywords": ["emcc", "mods", "evidence", "status"],
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "profile": {
+      "type": "string",
+      "title": "EMCC profile",
+      "description": "How strict EMCC gates are: standard asks, strict denies, off turns them off",
+      "options": ["standard", "strict", "off"],
+      "default": "standard"
+    }
+  }
+}

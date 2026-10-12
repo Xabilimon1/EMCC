@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  mods:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Claude Code (the version the mods are tested with)
+        run: npm install -g @anthropic-ai/claude-code@2.1.287
+      - name: Validate the marketplace and every mod
+        run: claude plugin validate --strict .
+      - name: Run every mod's tests
+        run: |
+          for mod in mods/*/; do
+            echo "::group::$mod"
+            claude plugin test "$mod"
+            echo "::endgroup::"
+          done

@@ -1,0 +1,15 @@
+{
+  "name": "emcc",
+  "owner": { "name": "Xabilimon1", "url": "https://github.com/Xabilimon1" },
+  "description": "EMCC (Every Mod Claude Code): a curated, tested collection of Claude Code mods.",
+  "plugins": [
+    {
+      "name": "emcc-core",
+      "source": "./mods/emcc-core",
+      "description": "EMCC's shared base: the $.emcc noun (evidence, badges, profile, kill switch) and one status band above the prompt.",
+      "version": "0.1.0",
+      "category": "development",
+      "tags": ["emcc", "evidence", "status", "platform"]
+    }
+  ]
+}
