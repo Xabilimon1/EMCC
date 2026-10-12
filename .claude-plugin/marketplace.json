@@ -23,7 +23,7 @@
       "name": "goalpost-guard",
       "source": "./mods/goalpost-guard",
       "description": "Stops Claude from passing a check by lowering the bar: weakened or deleted tests, new suppressions, relaxed config, softened CI, lowered coverage, skipped git hooks.",
-      "version": "0.1.3",
+      "version": "0.1.4",
       "category": "development",
       "tags": [
         "emcc",

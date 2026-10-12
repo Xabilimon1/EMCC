@@ -645,11 +645,11 @@ export const register: Register = (on, options) => {
 
     const tabs = (
       <Box gap={1}>
-        <Button key="tab-ledger" label={`Ledger ${list.length}`} variant={shown === 'ledger' ? 'primary' : undefined} onPress={() => update($, tab, () => 'ledger')} />
-        <Button key="tab-exceptions" label={`Exceptions ${standing.length}`} variant={shown === 'exceptions' ? 'primary' : undefined} onPress={() => update($, tab, () => 'exceptions')} />
-        <Button key="tab-rules" label="Rules" variant={shown === 'rules' ? 'primary' : undefined} onPress={() => update($, tab, () => 'rules')} />
-        <Button key="pause" label={paused ? 'Resume' : 'Pause'} onPress={() => update($, isPaused, value => !value)} />
-        <Button key="close" label="Close" role="dismiss" onPress={() => $.ui.close({ id: PANE })} />
+        <Button key="tab-ledger" hotkey="1" label={`Ledger ${list.length}`} variant={shown === 'ledger' ? 'primary' : undefined} onPress={() => update($, tab, () => 'ledger')} />
+        <Button key="tab-exceptions" hotkey="2" label={`Exceptions ${standing.length}`} variant={shown === 'exceptions' ? 'primary' : undefined} onPress={() => update($, tab, () => 'exceptions')} />
+        <Button key="tab-rules" hotkey="3" label="Rules" variant={shown === 'rules' ? 'primary' : undefined} onPress={() => update($, tab, () => 'rules')} />
+        <Button key="pause" hotkey="p" label={paused ? 'Resume' : 'Pause'} onPress={() => update($, isPaused, value => !value)} />
+        <Button key="close" hotkey="q" label="Close" role="dismiss" onPress={() => $.ui.close({ id: PANE })} />
       </Box>
     )
     const status = (

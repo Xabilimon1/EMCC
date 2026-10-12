@@ -49,7 +49,7 @@ In `claude -p` and other runs with no screen, nobody can answer the dialog, so `
 
 ## The ledger: `/goalposts`
 
-`/goalposts` opens a pane with three tabs:
+`/goalposts` opens a pane with three tabs (keys `1`, `2`, `3`; `p` pauses, `q` closes):
 
 - **Ledger**: every decision this session, newest first: held, allowed, standing exception or noted, the file, what the change did, and the lines it removed (`-`) or added (`+`). A held change has an **Allow in this file** button.
 - **Exceptions**: the standing ones for this project, each with **Revoke**.
@@ -113,4 +113,4 @@ Set them in `/config`, or at install with `--config key=value`.
 claude plugin test mods/goalpost-guard
 ```
 
-75 tests: the detectors (36), the gate, modes, options, exceptions, retargeted imports, trailers and audit (29), and the band and the pane on both terminal and desktop, plus the EMCC profile and badge (10). Each one was seen failing before it passed, by breaking the code it checks.
+76 tests: the detectors (36), the gate, modes, options, exceptions, retargeted imports, trailers and audit (29), and the band and the pane on both terminal and desktop, plus the EMCC profile and badge (11). Each one was seen failing before it passed, by breaking the code it checks.

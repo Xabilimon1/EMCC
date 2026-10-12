@@ -65,6 +65,18 @@ describe('the pane', () => {
     }
   })
 
+  test('the tabs, Pause and Close answer to 1, 2, 3, p and q', async ($, on) => {
+    world(on)
+    for (const surface of SURFACES) {
+      const ui = await $.ui.mount({ plugin: 'goalpost-guard', surface, ...PANE } as never)
+      const keys: Record<string, string> = { 'tab-ledger': '1', 'tab-exceptions': '2', 'tab-rules': '3', pause: 'p', close: 'q' }
+      for (const [key, hotkey] of Object.entries(keys)) {
+        expect((await ui.find({ key }))?.props.hotkey).toBe(hotkey)
+      }
+      await ui.unmount()
+    }
+  })
+
   test('Allow in this file on a held entry makes an exception that the next change honors', async ($, on) => {
     const it = world(on)
     it.answer = 'Block it'
