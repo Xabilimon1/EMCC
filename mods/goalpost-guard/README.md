@@ -2,7 +2,7 @@
 
 Stops Claude from making a check pass by lowering the bar. Tested with **Claude Code 2.1.287**, terminal and desktop.
 
-When a test fails, the shortest way to green is often not to fix the code but to move the goalposts: delete the assertion, skip the test, add `@ts-ignore`, turn `strict` off, put `continue-on-error` on the CI step, drop the coverage threshold, or commit with `--no-verify`. goalpost-guard reads every edit and shell command before it runs, and when one does that, it stops and asks you (with emcc-core, it lets the change through, tells Claude to report it and flags it for witness).
+When a test fails, the shortest way to green is often not to fix the code but to move the goalposts: delete the assertion, skip the test, add `@ts-ignore`, turn `strict` off, put `continue-on-error` on the CI step, drop the coverage threshold, or commit with `--no-verify`. goalpost-guard reads every edit and shell command before it runs, and when one does that, it stops and asks you. With emcc-core's `standard` profile and someone at the screen, it lets the change through instead, tells Claude to report it and flags it for witness; `strict` denies it.
 
 <p align="center">
   <img src="../../docs/media/goalpost-guard/demo.gif" width="880" alt="Claude Code with Haiku 4.5, told src/ is frozen, rewrites a test's expected value; goalpost-guard holds the edit; the answer goes back to Claude, which fixes src/cart.js instead">

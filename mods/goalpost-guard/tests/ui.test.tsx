@@ -177,7 +177,7 @@ async function flagsOf($: Engine): Promise<unknown[]> {
 describe('with emcc-core', () => {
   const WITH_EMCC = { plugins: [emcc] }
 
-  test('inherit follows the EMCC profile: standard reports and flags, strict denies and flags', WITH_EMCC, async ($, on) => {
+  test('inherit follows the EMCC profile: standard reports and flags, strict denies without a flag', WITH_EMCC, async ($, on) => {
     const it = world(on)
     const out = (await edit($)) as { deny?: string; context?: string[] }
     expect(it.asked).toEqual([])
