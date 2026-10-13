@@ -66,12 +66,12 @@ printf '%s' '{"model":{"display_name":"Opus 5.5"},"context_window":{"used_percen
 
 ## Change it
 
-Line numbers refer to `statusline.sh`.
+Each part of `statusline.sh` sits under a `# ──` heading.
 
-- **Color thresholds**: `pct_color`, lines 24 and 25. `-ge 80` is red, `-ge 50` is yellow, anything lower is green.
-- **Bar width**: the second argument of `colored_bar` on line 54 (`ctx`, 10) and on lines 60 and 69 (`5h` and `7d`, 8).
-- **Bar characters**: the `█` and `░` in `colored_bar`, lines 39 and 40.
-- **Colors**: the ANSI codes at the top, lines 8 to 16.
-- **Separator**: `SEP` in the assemble section, line 115.
-- **Remove a part**: delete its `parts+=(...)` line in the assemble section (lines 117 to 122). For example, delete line 119 to drop the 7-day bar. The code above that builds it can stay.
+- **Color thresholds**: `pct_color` in *helpers*. `-ge 80` is red, `-ge 50` is yellow, anything lower is green.
+- **Bar width**: the second argument of `colored_bar` in *1. context bar* (10) and in *2. 5-hour usage bar* and *3. weekly usage bar* (8).
+- **Bar characters**: the `█` and `░` in `colored_bar`, in *helpers*.
+- **Colors**: the ANSI codes in *ANSI color codes*.
+- **Separator**: `SEP` in *assemble*.
+- **Remove a part**: delete its `parts+=(...)` line in *assemble*; for example the one with `$week_bar` drops the 7-day bar. The code that builds it can stay.
 - **Reorder**: move the `parts+=(...)` lines.
