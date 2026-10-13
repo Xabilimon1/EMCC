@@ -4,6 +4,7 @@ export const KEEP_SEGMENTS = 200
 
 const EXPLORE_TOOLS = new Set(['Read', 'Grep', 'Glob', 'LS', 'NotebookRead', 'WebFetch', 'WebSearch'])
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'NotebookEdit'])
+const LEADING_CD = /^\s*(?:cd\s+(?:"[^"]*"|'[^']*'|\S+)\s*&&\s*)+/
 const READ_ONLY = /^\s*(?:rg|grep|ls|cat|head|tail|find|fd|tree|wc|git\s+(?:log|diff|show|status|blame))\b/
 
 /** What witness knows of a finished tool call. `isCheck` comes from emcc-core's `kindsOf`. */
@@ -27,7 +28,7 @@ export function phaseOf(facts: ToolFacts, isDebugging: boolean): PhaseStep {
     if (facts.isCheck) {
       return { phase: 'verify', isDebugging: facts.isError }
     }
-    if (READ_ONLY.test(facts.command ?? '')) {
+    if (READ_ONLY.test((facts.command ?? '').replace(LEADING_CD, ''))) {
       return { phase: 'explore', isDebugging }
     }
   }
@@ -83,13 +84,17 @@ export function ribbonOf(segments: readonly WitnessSegment[], width: number): Ce
   return cells
 }
 
-export function totalsOf(segments: readonly WitnessSegment[]): Partial<Record<WitnessPhase, number>> {
-  const totals: Partial<Record<WitnessPhase, number>> = {}
-  for (const segment of segments) {
-    totals[segment.phase] = (totals[segment.phase] ?? 0) + (segment.end - segment.start)
-  }
-
-  return totals
+/**
+ * The running total of time per phase, with `ms` more in `phase`. Kept apart
+ * from the segments, which merge their oldest ones past the cap and so cannot
+ * be added up for the whole session.
+ */
+export function addedTotal(
+  totals: Partial<Record<WitnessPhase, number>>,
+  phase: WitnessPhase,
+  ms: number,
+): Partial<Record<WitnessPhase, number>> {
+  return { ...totals, [phase]: (totals[phase] ?? 0) + ms }
 }
 
 export function durationText(ms: number): string {

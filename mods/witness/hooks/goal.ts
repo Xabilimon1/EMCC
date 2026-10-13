@@ -14,13 +14,15 @@ export function sameCommand(a: string, b: string): boolean {
   return collapsed(a) === collapsed(b)
 }
 
-/** The first sentence of a prompt, at most 100 characters. */
+/** The first sentence of a prompt, at most 100 characters (code points, so an emoji is never split). */
 export function goalFromPrompt(text: string): string {
   const trimmed = text.trim()
   const end = SENTENCE_END.exec(trimmed)
   const first = end === null ? trimmed : trimmed.slice(0, end[0] === '\n' ? end.index : end.index + 1).trim()
 
-  return first.length > LONGEST ? `${first.slice(0, LONGEST - 1)}…` : first
+  const characters = Array.from(first)
+
+  return characters.length > LONGEST ? `${characters.slice(0, LONGEST - 1).join('')}…` : first
 }
 
 /** `/goal` text: the goal, then criteria after "done when", split by `;`. */

@@ -15,6 +15,12 @@ describe('goalFromPrompt', () => {
     expect(cut.endsWith('…')).toBe(true)
   })
 
+  test('a long one is cut by characters, never in the middle of an emoji', async () => {
+    const cut = goalFromPrompt('😀'.repeat(150))
+    expect(Array.from(cut).length).toBe(100)
+    expect(cut).toBe(`${'😀'.repeat(99)}…`)
+  })
+
   test('a version number is not the end of a sentence', async () => {
     expect(goalFromPrompt('Upgrade to 2.1.287 and fix the build.')).toBe('Upgrade to 2.1.287 and fix the build.')
   })

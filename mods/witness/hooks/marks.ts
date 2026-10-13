@@ -19,6 +19,7 @@ export type CriterionMark =
   | { kind: 'proven'; at: number }
   | { kind: 'failing'; at: number }
   | { kind: 'stale'; editsAfter: number }
+  | { kind: 'flagged'; text: string }
   | { kind: 'open' }
   | { kind: 'ticked' }
 
@@ -36,7 +37,9 @@ export function markOf(
 ): Mark {
   const begin = step.startedAt ?? step.createdAt
   const end = step.completedAt ?? Number.POSITIVE_INFINITY
-  const flag = (flags ?? []).filter(one => one.at >= begin && one.at <= end).at(-1)
+  // A flag counts only for a step that went in progress, and only while it ran.
+  const started = step.startedAt
+  const flag = started === null ? undefined : (flags ?? []).filter(one => one.at >= started && one.at <= end).at(-1)
   if (flag !== undefined) {
     return { kind: 'flagged', text: flag.text }
   }
@@ -56,11 +59,16 @@ export function markOf(
   return editsAfter === 0 ? { kind: 'proven', by: proof.command ?? proof.kind, at: proof.at } : { kind: 'stale', editsAfter }
 }
 
-/** A `/goal` criterion's mark: its command's newest run, against every edit after it. */
+/**
+ * A `/goal` criterion's mark: its command's newest run, against every edit
+ * after it. A passing run with a flag at or before it was proven by a lowered
+ * bar, so it reads as flagged; `flags` is null when emcc-core could not be asked.
+ */
 export function criterionMarkOf(
   criterion: WitnessCriterion,
   runs: readonly WitnessRun[],
   edits: readonly WitnessEdit[],
+  flags: readonly Flag[] | null,
 ): CriterionMark {
   if (criterion.command === null) {
     return criterion.isTicked ? { kind: 'ticked' } : { kind: 'open' }
@@ -72,6 +80,10 @@ export function criterionMarkOf(
   }
   if (!run.isOk) {
     return { kind: 'failing', at: run.at }
+  }
+  const flag = (flags ?? []).filter(one => one.at <= run.at).at(-1)
+  if (flag !== undefined) {
+    return { kind: 'flagged', text: flag.text }
   }
   const editsAfter = edits.filter(one => one.at > run.at).length
 

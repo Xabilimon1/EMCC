@@ -75,7 +75,6 @@ export async function command($: Engine, name: string, args = ''): Promise<strin
   return (await $.command.run({ command: name, args } as never)).text ?? ''
 }
 
-/** What witness holds under `key`, read by a command `session(on)` registered (the test engine has no `$.state`). */
 /** What witness holds under `key`, as JSON: `null` when it holds nothing. Needs the `probe` plugin. */
 export async function state($: Engine, key: string): Promise<any> {
   return JSON.parse(await command($, 'witness-state'))[key] ?? null

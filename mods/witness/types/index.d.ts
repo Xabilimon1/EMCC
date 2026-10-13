@@ -43,6 +43,8 @@ declare module 'claude-code' {
       edits: WitnessEdit[]
       runs: WitnessRun[]
       segments: WitnessSegment[]
+      /** Time per phase over the whole session; the segments merge their oldest past a cap and cannot be added up. */
+      totals: Partial<Record<WitnessPhase, number>>
       cursor: number | null
       waitingSince: number | null
       isDebugging: boolean

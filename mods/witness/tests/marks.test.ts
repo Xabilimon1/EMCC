@@ -44,6 +44,26 @@ describe('markOf', () => {
     expect(markOf(step({ status: 'in_progress', completedAt: null }), [edit(200)], [], flags)).toMatchObject({ kind: 'flagged' })
   })
 
+  test('a flag only marks a step while it was running', async () => {
+    const flag = { source: 'goalpost-guard', rule: 'tests.expected', text: 'lowered', at: 250 }
+    const pending = step({ status: 'pending', startedAt: null, completedAt: null })
+    expect(markOf(pending, [], [], [flag])).toEqual({ kind: 'pending', isActive: false })
+    expect(markOf(step({ startedAt: 300 }), [edit(400)], [pass(500)], [flag])).toMatchObject({ kind: 'proven' })
+    const neverRan = step({ startedAt: null, createdAt: 10 })
+    expect(markOf(neverRan, [], [pass(300)], [flag])).toMatchObject({ kind: 'proven' })
+    expect(markOf(neverRan, [], [], [flag])).toEqual({ kind: 'unproven' })
+  })
+
+  test('a flag beats an unknown mark: without checks, a flagged step is still flagged', async () => {
+    const flags = [{ source: 'goalpost-guard', rule: 'tests.expected', text: 'lowered', at: 250 }]
+    expect(markOf(step(), [edit(200)], null, flags)).toEqual({ kind: 'flagged', text: 'lowered' })
+  })
+
+  test('edits no step owns count against every proof', async () => {
+    const edits = [edit(200, '/repo/a.js', null), edit(400, '/repo/b.js', '2')]
+    expect(markOf(step({ id: null }), edits, [pass(300)], [])).toEqual({ kind: 'stale', editsAfter: 1 })
+  })
+
   test('steps not completed are pending, the one in progress active', async () => {
     expect(markOf(step({ status: 'pending', startedAt: null, completedAt: null }), [], [], [])).toEqual({ kind: 'pending', isActive: false })
     expect(markOf(step({ status: 'in_progress', completedAt: null }), [], [], [])).toEqual({ kind: 'pending', isActive: true })
@@ -66,14 +86,27 @@ describe('criterionMarkOf', () => {
 
   test('its command passing after the newest edit proves it; an edit after makes it stale', async () => {
     const criterion = { text: '`npm test` passes', command: 'npm test', isTicked: false }
-    expect(criterionMarkOf(criterion, runs, [edit(200)])).toEqual({ kind: 'proven', at: 300 })
-    expect(criterionMarkOf(criterion, runs, [edit(200), edit(400)])).toEqual({ kind: 'stale', editsAfter: 1 })
-    expect(criterionMarkOf(criterion, runs.slice(0, 1), [])).toEqual({ kind: 'failing', at: 100 })
-    expect(criterionMarkOf({ ...criterion, command: 'npm run build' }, runs, [])).toEqual({ kind: 'open' })
+    expect(criterionMarkOf(criterion, runs, [edit(200)], [])).toEqual({ kind: 'proven', at: 300 })
+    expect(criterionMarkOf(criterion, runs, [edit(200), edit(400)], [])).toEqual({ kind: 'stale', editsAfter: 1 })
+    expect(criterionMarkOf(criterion, runs.slice(0, 1), [], [])).toEqual({ kind: 'failing', at: 100 })
+    expect(criterionMarkOf({ ...criterion, command: 'npm run build' }, runs, [], [])).toEqual({ kind: 'open' })
+  })
+
+  test('a lowered bar before the proof flags it, even with edits after; a flag after the run does not', async () => {
+    const criterion = { text: '`npm test` passes', command: 'npm test', isTicked: false }
+    const flag = (at: number, text = 'lowered') => ({ source: 'goalpost-guard', rule: 'tests.expected', text, at })
+    expect(criterionMarkOf(criterion, runs, [edit(200)], [flag(250)])).toEqual({ kind: 'flagged', text: 'lowered' })
+    expect(criterionMarkOf(criterion, runs, [edit(200), edit(400)], [flag(250)])).toEqual({ kind: 'flagged', text: 'lowered' })
+    expect(criterionMarkOf(criterion, runs, [], [flag(50, 'older'), flag(250, 'newer')])).toEqual({ kind: 'flagged', text: 'newer' })
+    expect(criterionMarkOf(criterion, runs, [edit(200)], [flag(300)])).toEqual({ kind: 'flagged', text: 'lowered' })
+    expect(criterionMarkOf(criterion, runs, [edit(200)], [flag(350)])).toEqual({ kind: 'proven', at: 300 })
+    expect(criterionMarkOf(criterion, runs, [edit(200)], null)).toEqual({ kind: 'proven', at: 300 })
+    expect(criterionMarkOf(criterion, runs.slice(0, 1), [], [flag(50)])).toEqual({ kind: 'failing', at: 100 })
   })
 
   test('without a command it is ticked by hand', async () => {
-    expect(criterionMarkOf({ text: 'README updated', command: null, isTicked: false }, runs, [])).toEqual({ kind: 'open' })
-    expect(criterionMarkOf({ text: 'README updated', command: null, isTicked: true }, runs, [])).toEqual({ kind: 'ticked' })
+    const flags = [{ source: 'goalpost-guard', rule: 'tests.expected', text: 'lowered', at: 250 }]
+    expect(criterionMarkOf({ text: 'README updated', command: null, isTicked: false }, runs, [], flags)).toEqual({ kind: 'open' })
+    expect(criterionMarkOf({ text: 'README updated', command: null, isTicked: true }, runs, [], flags)).toEqual({ kind: 'ticked' })
   })
 })

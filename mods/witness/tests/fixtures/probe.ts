@@ -25,6 +25,7 @@ export const probe: Plugin = {
         edits: (await $.state.get({ plugin: 'witness', key: 'edits' })).value,
         runs: (await $.state.get({ plugin: 'witness', key: 'runs' })).value,
         segments: (await $.state.get({ plugin: 'witness', key: 'segments' })).value,
+        totals: (await $.state.get({ plugin: 'witness', key: 'totals' })).value,
         cursor: (await $.state.get({ plugin: 'witness', key: 'cursor' })).value,
         waitingSince: (await $.state.get({ plugin: 'witness', key: 'waitingSince' })).value,
         isDebugging: (await $.state.get({ plugin: 'witness', key: 'isDebugging' })).value,

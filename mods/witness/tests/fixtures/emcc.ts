@@ -5,7 +5,8 @@ import type { Plugin } from 'claude-code/testing'
  * outside this plugin's folder, and a fixture runs on its own, so the test
  * drives it with commands: `emcc-check pass|fail <command>` records a test
  * run now, `emcc-flag <text>` raises a flag now, `emcc-badges` answers the
- * badges as JSON. `kindsOf` calls `npm test` and `tsc` checks.
+ * badges as JSON. `kindsOf` reports `npm test` and `tsc` as checks (as
+ * `['test']`, enough for witness, which only asks whether a command is one).
  */
 export const emcc: Plugin = {
   name: 'emcc-core',
