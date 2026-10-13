@@ -68,13 +68,9 @@ Every image below is a real Claude Code session, recorded from a script you can 
     </td>
   </tr>
   <tr>
-    <td valign="top">
+    <td colspan="2" valign="top">
       <img src="docs/media/goalpost-guard/audit.png" alt="/goalposts audit main listing three changes that lower the bar: continue-on-error in ci.yml, an eslint-disable, and a skipped test">
-      <p><img src="docs/icons/audit.svg" width="20" height="20" align="top" alt=""> <b>Audit a branch.</b><br><code>/goalposts audit main</code> finds what already lowered the bar.</p>
-    </td>
-    <td valign="top">
-      <img src="docs/media/goalpost-guard/exceptions.png" alt="The Exceptions tab with one standing exception and a Revoke button">
-      <p><img src="docs/icons/exceptions.svg" width="20" height="20" align="top" alt=""> <b>Exceptions you can take back.</b><br>They last across sessions, scoped to a file or a project.</p>
+      <p><img src="docs/icons/audit.svg" width="20" height="20" align="top" alt=""> <b>Audit a branch.</b> <code>/goalposts audit main</code> finds what already lowered the bar, before or without goalpost-guard.</p>
     </td>
   </tr>
 </table>
@@ -115,7 +111,7 @@ claude plugin install emcc-core@emcc --config profile=strict
 | | Mod | What it does | What it can reach | Version |
 |---|---|---|---|---|
 | <img src="docs/icons/band.svg" width="20" height="20" align="top" alt=""> | [`emcc-core`](mods/emcc-core) | The base the others build on. Records test, build, lint and typecheck runs and edits; draws one band above the prompt with the latest result of each and the badges other mods post; sets the profile (`standard`, `strict`, `off`); `/emcc-halt` turns every gate off. | No network, no files, no processes | 0.1.1 |
-| <img src="docs/icons/goalpost.svg" width="20" height="20" align="top" alt=""> | [`goalpost-guard`](mods/goalpost-guard) | Holds any edit or command that lowers the bar: removed, skipped or loosened tests, rewritten expected values, tests pointed at a stand-in, new suppressions, relaxed lint and type config, softened CI, lowered coverage, skipped git hooks. Asks you (or denies, or reports); remembers exceptions per file or project; puts what was let through in the commit as a `Goalpost-Change` trailer; `/goalposts audit` checks a branch. | Reads the files a change touches; runs `git` only for `/goalposts audit`; no network | 0.1.6 |
+| <img src="docs/icons/goalpost.svg" width="20" height="20" align="top" alt=""> | [`goalpost-guard`](mods/goalpost-guard) | Holds any edit or command that lowers the bar: removed, skipped or loosened tests, rewritten expected values, tests pointed at a stand-in, new suppressions, relaxed lint and type config, softened CI, lowered coverage, skipped git hooks. Asks you (or denies, or reports); remembers exceptions per file or project; puts what was let through in the commit as a `Goalpost-Change` trailer; `/goalposts audit` checks a branch. | Reads the files a change touches; runs `git` only for `/goalposts audit`; no network | 0.1.7 |
 
 ### Coming next
 
