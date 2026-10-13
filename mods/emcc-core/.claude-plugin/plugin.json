@@ -3,7 +3,7 @@
   "version": "0.1.1",
   "description": "EMCC's shared base: the $.emcc noun (evidence of tests, builds, lints and edits; badges; profile; kill switch) and one status band above the prompt.",
   "author": { "name": "Xabilimon1", "url": "https://github.com/Xabilimon1" },
-  "repository": "https://github.com/Xabilimon1/EMCC",
+  "repository": "https://github.com/Xabilimon1/emcc-claude-code-mods",
   "license": "MIT",
   "keywords": ["emcc", "mods", "evidence", "status"],
   "types": "./types/index.d.ts",

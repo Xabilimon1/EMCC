@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Xabilimon1/EMCC/actions/workflows/ci.yml"><img src="https://github.com/Xabilimon1/EMCC/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+  <a href="https://github.com/Xabilimon1/emcc-claude-code-mods/actions/workflows/ci.yml"><img src="https://github.com/Xabilimon1/emcc-claude-code-mods/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2b2b2b?style=flat-square" alt="MIT license"></a>
   <img src="https://img.shields.io/badge/Claude_Code-2.1.287%2B-2b2b2b?style=flat-square" alt="Claude Code 2.1.287 or later">
 </p>
@@ -80,7 +80,7 @@ Every image below is a real Claude Code session, recorded from a script you can 
 Inside Claude Code 2.1.287 or later:
 
 ```
-/plugin marketplace add Xabilimon1/EMCC
+/plugin marketplace add Xabilimon1/emcc-claude-code-mods
 /plugin install emcc-core@emcc
 /plugin install goalpost-guard@emcc
 ```
@@ -91,7 +91,7 @@ Each mod works on its own; together they share one profile and one band. Run `/e
 <summary><b>From your shell</b></summary>
 
 ```sh
-claude plugin marketplace add Xabilimon1/EMCC
+claude plugin marketplace add Xabilimon1/emcc-claude-code-mods
 claude plugin install emcc-core@emcc
 claude plugin install goalpost-guard@emcc
 ```

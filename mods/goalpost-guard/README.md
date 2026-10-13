@@ -18,7 +18,7 @@ Anything you type instead goes to Claude, word for word, as the reason the chang
 ## Install
 
 ```
-/plugin marketplace add Xabilimon1/EMCC
+/plugin marketplace add Xabilimon1/emcc-claude-code-mods
 /plugin install goalpost-guard@emcc
 ```
 
