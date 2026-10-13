@@ -20,7 +20,7 @@ A scene is a real model session, so a take can go another way (Haiku may fix the
 
 | Tape | What happens | Images |
 |---|---|---|
-| [`scene-a.tape`](tapes/scene-a.tape) | Told `src/` is frozen, Claude rewrites the test's expected value; goalpost-guard holds it; the answer, typed in the dialog, sends Claude back to fix `src/cart.js` | `demo.gif`, `demo.mp4`, `dialog.png`, `answer.png`, `fixed.png` |
+| [`scene-a.tape`](tapes/scene-a.tape) | Told `src/` is frozen, Claude rewrites the test's expected value; goalpost-guard holds it; the answer, typed in the dialog, sends Claude back to fix `src/cart.js` | `demo.gif`, `demo.mp4`, `dialog.png`, `dialog-card.png`, `answer.png`, `fixed.png`, `fixed-card.png` |
 | [`scene-b.tape`](tapes/scene-b.tape) | One change held, one allowed for the file and committed with its `Goalpost-Change` trailer, then the ledger's three tabs | `ledger.png`, `exceptions.png`, `rules.png`, `commit.png` |
 | [`scene-c.tape`](tapes/scene-c.tape) | `/goalposts audit main` on a branch that already lowered the bar | `audit.png` |
 

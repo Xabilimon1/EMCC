@@ -43,11 +43,11 @@ Every image below is a real Claude Code session, recorded from a script you can 
 <table>
   <tr>
     <td width="50%" valign="top">
-      <img src="docs/media/goalpost-guard/dialog.png" alt="The goalpost-guard question: this change test/cart.test.js changes the values in 1 assertion. Allow it? Block it, Allow once, Allow in this file, Allow in this project, or type something">
+      <img src="docs/media/goalpost-guard/dialog-card.png" alt="The goalpost-guard question: this change test/cart.test.js changes the values in 1 assertion. Allow it? Block it, Allow once, Allow in this file, Allow in this project, or type something">
       <p><img src="docs/icons/goalpost.svg" width="20" height="20" align="top" alt=""> <b>It asks before the bar moves.</b><br>Block it, allow it once, for the file or for the project, or tell Claude what to do instead.</p>
     </td>
     <td width="50%" valign="top">
-      <img src="docs/media/goalpost-guard/fixed.png" alt="The held edit shows Error editing file; Claude then fixes withTax in src/cart.js and the EMCC band reads test pass, goalposts: 1 held">
+      <img src="docs/media/goalpost-guard/fixed-card.png" alt="The held edit shows Error editing file; Claude then fixes withTax in src/cart.js and the EMCC band reads test pass, goalposts: 1 held">
       <p><img src="docs/icons/band.svg" width="20" height="20" align="top" alt=""> <b>Then Claude fixes the code.</b><br>The EMCC band shows the test run that passed and what was held on the way.</p>
     </td>
   </tr>
@@ -57,20 +57,24 @@ Every image below is a real Claude Code session, recorded from a script you can 
       <p><img src="docs/icons/ledger.svg" width="20" height="20" align="top" alt=""> <b>Every decision, with its lines.</b><br><code>/goalposts</code> opens the ledger: what was held or let through, and what it removed or added.</p>
     </td>
     <td valign="top">
+      <img src="docs/media/goalpost-guard/rules.png" alt="The Rules tab: tests, suppressions, config, CI, coverage thresholds and skipped git hooks, each on, with a Mute button">
+      <p><img src="docs/icons/rules.svg" width="20" height="20" align="top" alt=""> <b>Six families, each switchable.</b><br>Mute one for the session; <code>/config</code> for good.</p>
+    </td>
+  </tr>
+  <tr>
+    <td colspan="2" valign="top">
       <img src="docs/media/goalpost-guard/commit.png" alt="git log showing the commit Round tax to whole euros with the trailer Goalpost-Change: test/cart.test.js: changes the values in 1 assertion (allowed by the user: from now on in this file)">
-      <p><img src="docs/icons/commit.svg" width="20" height="20" align="top" alt=""> <b>What was let through goes in the commit.</b><br>A <code>Goalpost-Change</code> trailer, so the reviewer sees it in <code>git log</code>.</p>
-      <img src="docs/media/goalpost-guard/audit.png" alt="/goalposts audit main listing three changes that lower the bar: continue-on-error in ci.yml, an eslint-disable, and a skipped test">
-      <p><img src="docs/icons/audit.svg" width="20" height="20" align="top" alt=""> <b>Audit a branch.</b><br><code>/goalposts audit main</code> finds what already lowered the bar.</p>
+      <p><img src="docs/icons/commit.svg" width="20" height="20" align="top" alt=""> <b>What was let through goes in the commit.</b> A <code>Goalpost-Change</code> trailer, so the reviewer sees it in <code>git log</code>.</p>
     </td>
   </tr>
   <tr>
     <td valign="top">
-      <img src="docs/media/goalpost-guard/exceptions.png" alt="The Exceptions tab with one standing exception and a Revoke button">
-      <p><img src="docs/icons/exceptions.svg" width="20" height="20" align="top" alt=""> <b>Exceptions you can take back.</b><br>They last across sessions, scoped to a file or a project.</p>
+      <img src="docs/media/goalpost-guard/audit.png" alt="/goalposts audit main listing three changes that lower the bar: continue-on-error in ci.yml, an eslint-disable, and a skipped test">
+      <p><img src="docs/icons/audit.svg" width="20" height="20" align="top" alt=""> <b>Audit a branch.</b><br><code>/goalposts audit main</code> finds what already lowered the bar.</p>
     </td>
     <td valign="top">
-      <img src="docs/media/goalpost-guard/rules.png" alt="The Rules tab: tests, suppressions, config, CI, coverage thresholds and skipped git hooks, each on, with a Mute button">
-      <p><img src="docs/icons/rules.svg" width="20" height="20" align="top" alt=""> <b>Six families, each switchable.</b><br>Mute one for the session; <code>/config</code> for good.</p>
+      <img src="docs/media/goalpost-guard/exceptions.png" alt="The Exceptions tab with one standing exception and a Revoke button">
+      <p><img src="docs/icons/exceptions.svg" width="20" height="20" align="top" alt=""> <b>Exceptions you can take back.</b><br>They last across sessions, scoped to a file or a project.</p>
     </td>
   </tr>
 </table>
