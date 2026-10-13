@@ -1,0 +1,11 @@
+{
+  "name": "witness",
+  "version": "0.1.0",
+  "description": "A live view of Claude's work: the goal, a ribbon of what it spent its time on, what it is doing now, and each step marked proven, unproven, stale or flagged.",
+  "author": { "name": "Xabilimon1", "url": "https://github.com/Xabilimon1" },
+  "repository": "https://github.com/Xabilimon1/emcc-claude-code-mods",
+  "license": "MIT",
+  "keywords": ["emcc", "live", "proof", "visual", "tasks"],
+  "types": "./types/index.d.ts",
+  "dependencies": ["emcc-core"]
+}
