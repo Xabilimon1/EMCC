@@ -1,12 +1,13 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { EmccBadge, EmccEvidence, EmccEvidenceKind, EmccProfile, EmccTone } from '../types'
+import type { EmccBadge, EmccEvidence, EmccEvidenceKind, EmccFlag, EmccProfile, EmccTone } from '../types'
 import { exitCodeOf, kindsOf } from './evidence'
 
 const evidence = atom({ plugin: 'emcc-core', key: 'evidence' } as const, [])
 const badges = atom({ plugin: 'emcc-core', key: 'badges' } as const, [])
 const isHalted = atom({ plugin: 'emcc-core', key: 'isHalted' } as const, false)
+const flags = atom({ plugin: 'emcc-core', key: 'flags' } as const, [])
 
 const KEEP = 200
 const SHOWN: readonly EmccEvidenceKind[] = ['test', 'typecheck', 'lint', 'build']
@@ -90,6 +91,27 @@ export const register: Register = (on, options) => {
 
         return value
       },
+      flag: async ({ source, rule, file, text }) => {
+        const raised: EmccFlag = { source, rule, ...(file === undefined ? {} : { file }), text, at: await beneath.clock.now() }
+        for (let attempt = 0; attempt < 5; attempt += 1) {
+          const held = await beneath.state.get({ plugin: 'emcc-core', key: 'flags' })
+          const written = await beneath.state.set(
+            { plugin: 'emcc-core', key: 'flags' },
+            [...(held.value ?? []), raised].slice(-KEEP),
+            { ifVersion: held.version },
+          )
+          if (written.isSet) {
+            return
+          }
+        }
+        throw new Error('emcc-core: the flags kept changing; try again')
+      },
+      flagsSince: async ({ at }) => {
+        const { value = [] } = await beneath.state.get({ plugin: 'emcc-core', key: 'flags' })
+
+        return value.filter(item => item.at >= at)
+      },
+      kindsOf: async ({ command }) => kindsOf(command),
     }
 
     const added = { emcc }

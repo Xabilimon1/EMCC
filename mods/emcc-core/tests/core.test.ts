@@ -70,3 +70,38 @@ describe('badges', () => {
     expect(await run($, 'emcc')).toContain('Badges: none')
   })
 })
+
+describe('flags', () => {
+  test('a flag keeps the time it was raised, and flagsSince reads from a time on', WITH_PROBE, async ($, on) => {
+    const clock = mock.clock(on, { now: 1000 })
+    await run($, 'probe-flag', 'tests.expected changes the values in 1 assertion')
+    await clock.advance(500)
+    await run($, 'probe-flag', 'ci continue-on-error added')
+    expect(JSON.parse(await run($, 'probe-flags-since', '0'))).toEqual([
+      { source: 'probe', rule: 'tests.expected', text: 'changes the values in 1 assertion', at: 1000 },
+      { source: 'probe', rule: 'ci', text: 'continue-on-error added', at: 1500 },
+    ])
+    expect(JSON.parse(await run($, 'probe-flags-since', '1200'))).toEqual([
+      { source: 'probe', rule: 'ci', text: 'continue-on-error added', at: 1500 },
+    ])
+    expect(JSON.parse(await run($, 'probe-flags-since', '1500'))).toHaveLength(1)
+    expect(JSON.parse(await run($, 'probe-flags-since', '1501'))).toEqual([])
+  })
+
+  test('only the newest 200 flags are kept', WITH_PROBE, async ($, on) => {
+    mock.clock(on)
+    for (let index = 0; index < 205; index += 1) {
+      await run($, 'probe-flag', `rule flag ${index}`)
+    }
+    const kept = JSON.parse(await run($, 'probe-flags-since', '0')) as { text: string }[]
+    expect(kept.length).toBe(200)
+    expect(kept[0]?.text).toBe('flag 5')
+  })
+})
+
+describe('kindsOf', () => {
+  test('classifies a command the way the evidence log does', WITH_PROBE, async $ => {
+    expect(JSON.parse(await run($, 'probe-kinds', 'npm run build && npm test'))).toEqual(['test', 'build'])
+    expect(JSON.parse(await run($, 'probe-kinds', 'git status'))).toEqual([])
+  })
+})

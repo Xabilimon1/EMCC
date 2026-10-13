@@ -39,6 +39,9 @@ if (profile === 'strict') {
 | `badge({ id, text?, tone? })` | Shows or replaces your slot in the band; without `text` removes it. Not while drawing |
 | `profile()` | `standard`, `strict` or `off` (`off` also while halted) |
 | `isHalted()` | Whether the kill switch is on |
+| `flag({ source, rule, file?, text })` | Records a lowered bar for other mods to show. Not while drawing |
+| `flagsSince({ at })` | All flags raised at or after `at` |
+| `kindsOf({ command })` | The evidence kinds a shell command runs, as the log classifies it |
 
 The types are in [`types/index.d.ts`](types/index.d.ts); `/plugin-types` copies them for a mod that depends on emcc-core.
 

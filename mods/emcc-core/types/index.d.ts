@@ -38,6 +38,18 @@ export type EmccTone = 'neutral' | 'good' | 'warn' | 'bad'
 
 export type EmccBadge = { id: string; text: string; tone: EmccTone }
 
+/**
+ * A lowered bar a mod noticed: what rule, where, and one line for people.
+ * `at` is the session clock in milliseconds, set by emcc-core.
+ */
+export type EmccFlag = {
+  source: string
+  rule: string
+  file?: string
+  text: string
+  at: number
+}
+
 export type Emcc = {
   /**
    * The newest evidence of a kind, or null when there is none yet.
@@ -70,6 +82,25 @@ export type Emcc = {
    * Whether the kill switch is on (`/emcc-halt` or the band's Halt button).
    */
   isHalted: () => Promise<boolean>
+
+  /**
+   * Records a lowered bar for other mods to show. Call it from a hook or a
+   * handler, never while drawing.
+   * @example
+   * await $.emcc.flag({ source: 'goalpost-guard', rule: 'tests.expected', file, text: 'changes the values in 1 assertion' })
+   */
+  flag: (input: { source: string; rule: string; file?: string; text: string }) => Promise<void>
+
+  /**
+   * Every flag raised at or after `at`, oldest first.
+   */
+  flagsSince: (input: { at: number }) => Promise<EmccFlag[]>
+
+  /**
+   * The evidence kinds a shell command runs, as the log classifies it:
+   * `npm run build && npm test` is `['test', 'build']`, `git status` is `[]`.
+   */
+  kindsOf: (input: { command: string }) => Promise<EmccEvidenceKind[]>
 }
 
 declare module 'claude-code' {
@@ -81,6 +112,7 @@ declare module 'claude-code' {
     'emcc-core': {
       evidence: EmccEvidence[]
       badges: EmccBadge[]
+      flags: EmccFlag[]
       isHalted: boolean
     }
   }
