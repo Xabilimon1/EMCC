@@ -34,7 +34,7 @@ A pane, top to bottom:
    | `✓` olive | Completed and **proven**: a test, build or typecheck passed after the step's last edit. Shows which command and when. |
    | `○` stone | Completed with **no proof**: nothing ran after its edits, or nothing ran at all. |
    | `◌` stone | **Proof went stale**: a check passed, then the step's files were edited again. Shows "proven before N edits". |
-   | `▲` clay | A **lowered bar** was flagged during the step (goalpost-guard, or any mod that flags). The step never counts as proven while it carries a flag, even if checks pass afterwards: a passing check cannot tell a fixed test from a lowered one. Shows the flag's text. |
+   | `▲` clay | A **lowered bar** was flagged while the step was in progress (goalpost-guard, or any mod that flags). A step that never went `in_progress` is never flagged: Claude often creates every task up front, and a flag must not spread to steps that were not running. The step never counts as proven while it carries a flag, even if checks pass afterwards: a passing check cannot tell a fixed test from a lowered one. Shows the flag's text. |
    | `·` | Pending. The step in progress is highlighted. |
 
    A step's edits are the Edit, Write and NotebookEdit calls made while it was `in_progress`; edits made while no step is in progress belong to none. A completed step with no edits of its own is judged by the newest check after the step began, and a step that never went `in_progress` began when it was created.
@@ -47,7 +47,7 @@ A pane, top to bottom:
 /goal fix withTax rounding; done when `npm test` passes; the README shows the new rate
 ```
 
-- A criterion with a command in backticks is proven when that exact command (whitespace collapsed) passed after the newest edit of the session. It turns stale the same way a step does.
+- A criterion with a command in backticks is proven when that exact command (whitespace collapsed) passed after the newest edit of the session. It turns stale the same way a step does. If a lowered bar was flagged after the goal was set and at or before that passing run, the criterion shows `▲` instead of `✓`.
 - A criterion without a command is ticked by the person: the pane lists criteria with hotkeys `1`–`9`.
 - Without "done when", the whole text is the goal and there are no criteria.
 - `/goal` with no text clears it, and the goal falls back to the prompt.
@@ -58,7 +58,7 @@ Criteria are drawn above the steps when they exist.
 
 - On the first tool call of a session, witness calls `$.ui.open({ id: 'witness', title: 'witness', closeOnEscape: true })`. The engine places a pane opened unasked from 144 terminal columns, and from 110 once the person has opened it themselves.
 - When the pane is not placed (narrow terminal), a line above the prompt reads `Live view · 2/4 proven` with a **Live** button. With emcc-core it is a badge in the EMCC band; without it, witness draws its own line, as goalpost-guard does.
-- `/live` opens the pane at any width. Esc closes it. `p` pauses witness for the session, and `/live resume` brings it back.
+- `/live` opens the pane at any width. Esc closes it. `p` in the pane, or `/live pause`, pauses witness for the session, and `/live resume` brings it back.
 - The same tree draws on the terminal and the desktop Code tab: Box, Text and Button only, no Raster.
 
 ## Architecture
@@ -111,14 +111,14 @@ Flags live in session state next to the evidence, capped like it.
 | `prompt.submit` | the goal from the prompt's first sentence, unless `/goal` set one |
 | `tool.call` (every tool) | before `next`: sets Now, opens the pane on the first call. After `next`: closes the ribbon segment with its phase and duration, clears Now. `TaskCreate` (id from the result text `Task #N created`) and `TaskUpdate` (`taskId`, `status`, `subject`) maintain the steps. Edit, Write and NotebookEdit are attributed to the step in progress. |
 | `turn.complete` | opens a waiting segment |
-| `command.run` | `/live`, `/live resume`, `/goal` |
+| `command.run` | `/live`, `/live pause`, `/live resume`, `/goal` |
 | `ui.render` | `Pane` (`witness`) and `AbovePrompt` (only without emcc-core) |
 
 **Marks are computed while drawing, never stored.** For each step: its edits, then `$.emcc.evidenceSince` and `$.emcc.flagsSince` from when the step began. A mark cannot go stale in storage because none is stored.
 
 The phase classifier and the mark calculation are pure functions in their own files (`hooks/phases.ts`, `hooks/marks.ts`), with no `$`.
 
-**Session state** (`$.state`, declared in `types/index.d.ts`): goal, criteria (with ticks), steps (id, subject, status, startedAt, edits), ribbon segments (at most 200; the oldest merge into one), now, isPaused. Nothing is written to disk, nothing goes over the network.
+**Session state** (`$.state`, declared in `types/index.d.ts`): goal (and when `/goal` set it), criteria (with ticks), steps (id, subject, status, createdAt, startedAt, completedAt), edits and shell runs (each with its time; an edit names the step in progress), ribbon segments (at most 200; the oldest merge into one), running totals per phase (kept apart from the segments, so merging never shifts time between phases), now, isPaused. Nothing is written to disk, nothing goes over the network.
 
 **The pulse** uses `$.clock.every(1000, …)`, started when an action begins and stopped when it ends or the pane closes.
 
