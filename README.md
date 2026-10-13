@@ -15,6 +15,7 @@
   <a href="#see-it-work">See it work</a>&emsp;&emsp;
   <a href="#install">Install</a>&emsp;&emsp;
   <a href="#mods">Mods</a>&emsp;&emsp;
+  <a href="#status-line">Status line</a>&emsp;&emsp;
   <a href="#what-a-mod-can-reach">What a mod can reach</a>&emsp;&emsp;
   <a href="#build-on-emcc">Build on EMCC</a>
 </p>
@@ -119,6 +120,10 @@ claude plugin install emcc-core@emcc --config profile=strict
 |---|---|---|
 | 1 | `redgreen` | TDD that only moves on when the test output says so: red first, then green. |
 | 2 | `cassette` | Records model replies once and replays a session offline, the same way every time. |
+
+## Status line
+
+[`statusline/`](statusline) is a one-line Claude Code status line in a single bash script: context window used, 5-hour and 7-day rate limits as colored bars (yellow from 50%, red from 80%), then the model, the project and the directory. It is not a mod and not part of the marketplace; copy the script and add one `statusLine` entry to your settings, as the [README there](statusline/README.md) describes.
 
 ## What a mod can reach
 
