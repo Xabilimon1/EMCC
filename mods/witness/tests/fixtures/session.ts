@@ -18,6 +18,8 @@ export type Session = {
   taskAnswer: 'both' | 'structured' | 'text'
   /** The tools whose calls reached the engine beneath witness, in order. */
   reached: string[]
+  /** The args of every `/goal` that reached the engine beneath witness: Claude Code's built-in, in order. */
+  goalRuns: string[]
 }
 
 /** The session the running test made: the helpers settle its clock, so witness's queued work is done before they look. */
@@ -34,7 +36,8 @@ async function settled(): Promise<void> {
  * placed while `isWide` (opened narrow, placed once it widens), and commands or file paths that fail while listed in `failing`.
  * A call given `holdMs` runs that long on the clock (start it unawaited and
  * advance the clock); a Bash call with `run_in_background` answers a
- * background task id; tools listed in `denying` are denied. A call given
+ * background task id; tools listed in `denying` are denied. `/goal` is the
+ * built-in's: it records its args in `goalRuns` and answers `built-in goal set`. A call given
  * `crash` makes this hook throw: the engine skips a hook that throws, and with
  * nothing else beneath, the call rejects with `no implementation for tool.call`.
  *
@@ -54,6 +57,7 @@ export function session(on: On): Session {
     denying: new Set(),
     taskAnswer: 'both',
     reached: [],
+    goalRuns: [],
   }
   current = it
   let nextId = 1
@@ -68,6 +72,12 @@ export function session(on: On): Session {
     }
 
     return { value: '/repo' }
+  })
+  // Claude Code's built-in /goal, which witness only reads: it records that it ran and answers.
+  on('command.run', { command: 'goal' }, (_$, e) => {
+    it.goalRuns.push(e.args)
+
+    return { text: 'built-in goal set' }
   })
   on('ui.open', (_$, e) => {
     it.opened.push(e as unknown as Session['opened'][number])

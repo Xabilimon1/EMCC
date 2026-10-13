@@ -97,6 +97,22 @@ describe('the pane', () => {
     }
   })
 
+  test('the goal is one line, cut with an ellipsis when long, and clear of the pane’s close mark', WITH_PROBE, async ($, on) => {
+    session(on)
+    const long = `Fix ${'the rounding in withTax and every other place that adds the tax twice, '.repeat(2)}for good`
+    await prompt($, long)
+    for (const surface of SURFACES) {
+      const ui = await pane($, surface)
+      const line = await ui.find({ key: 'goal' })
+      // 3 columns of margin keep the text off the top-right corner, where the close mark sits.
+      expect(line?.props.marginRight).toBe(3)
+      const text = await ui.find({ type: 'Text', text: /^Goal / })
+      expect(text?.props.wrap).toBe('truncate-end')
+      expect(text?.text).toContain('Fix the rounding in withTax')
+      await ui.unmount()
+    }
+  })
+
   test('the time under each phase is its running total, in seconds then minutes', WITH_PROBE, async ($, on) => {
     const it = session(on)
     await prompt($, 'Fix it.')

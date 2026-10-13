@@ -586,19 +586,13 @@ function tick($: EngineInterface, index: number): Promise<void> {
 
 // ---------------------------------------------------------------- register
 
-/** `/goal`: sets the goal and its criteria, or clears them; answers what it did. */
-async function setGoal($: EngineInterface, text: string): Promise<string> {
-  if (text === '') {
-    const fallback = await read($, promptGoal)
-    await update($, goal, () => fallback)
-    await update($, isGoalSet, () => false)
-    await update($, goalSetAt, () => null)
-    await update($, criteria, () => [])
-
-    return 'Goal cleared; it follows your prompt again.'
-  }
+/**
+ * What the person typed after Claude Code's own `/goal`: the goal and, after
+ * "done when", its criteria. Empty text is left alone (what the built-in does
+ * with it is its business, and witness has nothing to read).
+ */
+async function setGoal($: EngineInterface, text: string): Promise<void> {
   const parsed = parseGoal(text)
-  const count = parsed.criteria.length
   const at = await $.clock.now()
   await update($, criteria, () => parsed.criteria)
   await update($, goalSetAt, () => at)
@@ -608,23 +602,16 @@ async function setGoal($: EngineInterface, text: string): Promise<string> {
     await update($, goal, () => fallback)
     await update($, isGoalSet, () => false)
 
-    return `${countText(count)} set; the goal follows your prompt.`
+    return
   }
   await update($, goal, () => parsed.goal)
   await update($, isGoalSet, () => true)
-
-  return count === 0 ? 'Goal set.' : `Goal set with ${countText(count)}.`
-}
-
-function countText(count: number): string {
-  return `${count} ${count === 1 ? 'criterion' : 'criteria'}`
 }
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     try {
       await $.command.register({ name: 'live', description: 'witness: open the live view; "pause" stops watching, "resume" starts again' })
-      await $.command.register({ name: 'goal', description: 'witness: set the goal, with criteria after "done when"; empty clears it' })
     } catch {
       await lose($, 'session.start')
     }
@@ -746,17 +733,19 @@ export const register: Register = on => {
     }
   })
 
-  on('command.run', { command: 'goal' }, async ($, e) => {
+  // `/goal` is Claude Code's own: witness reads what is typed after it and lets the built-in run, unchanged, exactly once.
+  on('command.run', { command: 'goal' }, async ($, e, next) => {
     try {
-      const answer = await setGoal($, e.args.trim())
-      queued($, 'command.run', async () => refreshBadge($))
-
-      return { text: answer }
+      const text = e.args.trim()
+      if (text !== '') {
+        await setGoal($, text)
+        queued($, '/goal', async () => refreshBadge($))
+      }
     } catch {
-      await lose($, 'command.run')
-
-      return { text: 'witness lost track at /goal.' }
+      await lose($, '/goal')
     }
+
+    return next(e)
   })
 
   on('ui.close', { id: PANE }, async ($, e, next) => {
@@ -792,10 +781,13 @@ export const register: Register = on => {
 
     return (
       <Box flexDirection="column" gap={1}>
-        <Text>
-          <Text color={STONE}>Goal </Text>
-          <Text bold>{goalText === '' ? 'waiting for a prompt' : goalText}</Text>
-        </Text>
+        {/* One line: cut with an ellipsis, and 3 columns short of the edge so it never reaches the close mark in the top-right corner. */}
+        <Box key="goal" marginRight={3}>
+          <Text wrap="truncate-end">
+            <Text color={STONE}>Goal </Text>
+            <Text bold>{goalText === '' ? 'waiting for a prompt' : goalText}</Text>
+          </Text>
+        </Box>
         <Box flexDirection="column">
           <Text>
             {cells.length === 0 ? (

@@ -12,26 +12,52 @@ type Segment = { phase: string; start: number; end: number }
 const lengths = (segments: Segment[]) => segments.map(one => [one.phase, one.start, one.end])
 
 describe('the goal', () => {
-  test('comes from the prompt; /goal replaces it and, empty, gives it back', WITH_PROBE, async ($, on) => {
-    session(on)
+  test('comes from the prompt; what you type in /goal replaces it, and criteria come after "done when"', WITH_PROBE, async ($, on) => {
+    const it = session(on)
     await prompt($, 'Fix the rounding in withTax. Then run the tests.')
     expect(await state($, 'goal')).toBe('Fix the rounding in withTax.')
-    expect(await command($, 'goal', 'fix withTax; done when `npm test` passes')).toBe('Goal set with 1 criterion.')
+    // The built-in runs and its answer is the one the person sees.
+    expect(await command($, 'goal', 'fix withTax; done when `npm test` passes')).toBe('built-in goal set')
+    expect(it.goalRuns).toEqual(['fix withTax; done when `npm test` passes'])
     expect(await state($, 'goal')).toBe('fix withTax')
+    expect(await state($, 'isGoalSet')).toBe(true)
     expect(await state($, 'criteria')).toEqual([{ text: '`npm test` passes', command: 'npm test', isTicked: false }])
+    expect(await state($, 'goalSetAt')).toBe(0)
     await prompt($, 'Also update the README.')
     expect(await state($, 'goal')).toBe('fix withTax')
-    expect(await command($, 'goal')).toBe('Goal cleared; it follows your prompt again.')
-    expect(await state($, 'goal')).toBe('Also update the README.')
-    expect(await state($, 'criteria')).toEqual([])
-    expect(await state($, 'goalSetAt')).toBeNull()
+    expect(await state($, 'lostAt')).toBeNull()
+  })
+
+  test('the built-in gets the args exactly as typed, once', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    await command($, 'goal', '  fix  withTax ; done when `npm test` passes  ')
+    expect(it.goalRuns).toEqual(['  fix  withTax ; done when `npm test` passes  '])
+    expect(await state($, 'goal')).toBe('fix  withTax')
+  })
+
+  test('an empty /goal changes nothing in witness and still runs the built-in', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    await prompt($, 'Fix the rounding in withTax.')
+    await it.clock.advance(2000)
+    await command($, 'goal', 'fix withTax; done when `npm test` passes')
+    await prompt($, 'Also update the README.')
+    for (const empty of ['', '   ']) {
+      expect(await command($, 'goal', empty)).toBe('built-in goal set')
+      expect(await state($, 'goal')).toBe('fix withTax')
+      expect(await state($, 'isGoalSet')).toBe(true)
+      expect(await state($, 'criteria')).toEqual([{ text: '`npm test` passes', command: 'npm test', isTicked: false }])
+      expect(await state($, 'goalSetAt')).toBe(2000)
+    }
+    expect(it.goalRuns).toEqual(['fix withTax; done when `npm test` passes', '', '   '])
+    expect(await state($, 'lostAt')).toBeNull()
   })
 
   test('criteria with no goal text keep the goal following the prompt', WITH_PROBE, async ($, on) => {
     const it = session(on)
     await prompt($, 'Fix the cart.')
     await it.clock.advance(3000)
-    expect(await command($, 'goal', 'done when `npm test` passes')).toBe('1 criterion set; the goal follows your prompt.')
+    expect(await command($, 'goal', 'done when `npm test` passes')).toBe('built-in goal set')
+    expect(it.goalRuns).toEqual(['done when `npm test` passes'])
     expect(await state($, 'goal')).toBe('Fix the cart.')
     expect(await state($, 'isGoalSet')).toBe(false)
     expect(await state($, 'goalSetAt')).toBe(3000)
@@ -562,6 +588,25 @@ describe('opening and pausing', () => {
     expect(lengths(await state($, 'segments'))).toEqual([['explore', 1000, 2000]])
   })
 
+  test('session start registers /live and not /goal, which is the built-in’s', WITH_PROBE, async ($, on) => {
+    session(on)
+    const registered: string[] = []
+    on('session.start', () => ({ cwd: '/repo' }) as never)
+    // As in a real session: the built-in /goal refuses to be registered over.
+    on('command.register', (_$, e) => {
+      const { name } = e as unknown as { name: string }
+      registered.push(name)
+      if (name === 'goal') {
+        throw new Error('"/goal" refused: it is the built-in /goal')
+      }
+
+      return { value: undefined } as never
+    })
+    expect(await $.session.start({ cwd: '/repo', surface: null, isInteractive: true } as never)).toEqual({ cwd: '/repo' })
+    expect(registered).toEqual(['live'])
+    expect(await state($, 'lostAt')).toBeNull()
+  })
+
   test('a failure at session start is recorded, and the session starts', WITH_PROBE, async ($, on) => {
     session(on)
     on('session.start', () => ({ cwd: '/repo' }) as never)
@@ -590,11 +635,21 @@ describe('opening and pausing', () => {
 
   test('a command that fails answers so, and records where', WITH_PROBE, async ($, on) => {
     session(on)
-    await command($, 'witness-break', 'criteria')
-    expect(await command($, 'goal', 'fix withTax; done when `npm test` passes')).toBe('witness lost track at /goal.')
-    expect(await state($, 'lostAt')).toBe('command.run')
     await command($, 'witness-break', 'isPaused')
     expect(await command($, 'live', 'pause')).toBe('witness lost track at /live.')
+  })
+
+  test('witness failing inside /goal still runs the built-in, once, and records where', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    await command($, 'witness-break', 'criteria')
+    expect(await command($, 'goal', 'fix withTax; done when `npm test` passes')).toBe('built-in goal set')
+    expect(it.goalRuns).toEqual(['fix withTax; done when `npm test` passes'])
+    expect(await state($, 'lostAt')).toBe('/goal')
+    // Mended, the next /goal is read again.
+    await command($, 'witness-break', '')
+    expect(await command($, 'goal', 'fix the cart')).toBe('built-in goal set')
+    expect(it.goalRuns).toHaveLength(2)
+    expect(await state($, 'goal')).toBe('fix the cart')
   })
 })
 
