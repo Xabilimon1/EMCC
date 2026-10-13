@@ -11,7 +11,7 @@
     "profile": {
       "type": "string",
       "title": "EMCC profile",
-      "description": "How strict EMCC gates are: standard asks, strict denies, off turns them off",
+      "description": "How strict EMCC gates are: standard reports, strict denies, off turns them off",
       "options": ["standard", "strict", "off"],
       "default": "standard"
     }

@@ -186,10 +186,32 @@ describe('with emcc-core', () => {
     expect(await flagsOf($)).toEqual([
       { source: 'goalpost-guard', rule: 'tests.assertions', file: '/repo/src/add.test.ts', text: 'removes 1 assertion (let through and reported)' },
     ])
+    const flagged = await flagsOf($)
     await profile($, 'strict')
     expect(said(await edit($))).toContain('goalpost-guard refused this change')
-    expect((await flagsOf($)).at(-1)).toMatchObject({ text: 'removes 1 assertion (held)' })
+    expect(await flagsOf($)).toEqual(flagged)
     expect(it.asked).toEqual([])
+  })
+
+  test('a standing exception lets the change through and flags it as such', WITH_EMCC, async ($, on) => {
+    const exception = { project: '/repo', rule: 'tests.assertions', file: '/repo/src/add.test.ts', note: 'flaky upstream', at: 1 }
+    const it = world(on, undefined, { exceptions: [exception] })
+    await edit($)
+    expect(it.asked).toEqual([])
+    expect(it.ran.length).toBe(1)
+    expect(await flagsOf($)).toEqual([
+      { source: 'goalpost-guard', rule: 'tests.assertions', file: '/repo/src/add.test.ts', text: 'removes 1 assertion (standing exception)' },
+    ])
+  })
+
+  test('inherit asks when there is no screen, so headless applies (deny by default)', WITH_EMCC, async ($, on) => {
+    const it = world(on)
+    it.surfaces = []
+    const out = await edit($)
+    expect(said(out)).toContain('no one is here to allow it')
+    expect(it.ran).toEqual([])
+    expect(it.asked).toEqual([])
+    expect(await flagsOf($)).toEqual([])
   })
 
   test('mode ask keeps the dialog with emcc-core, and what the person allows is flagged too', { ...WITH_EMCC, options: { mode: 'ask' } }, async ($, on) => {

@@ -90,13 +90,14 @@ Flags live in session state next to the evidence, capped like it.
 
 | emcc-core | Profile | Before | Now |
 |---|---|---|---|
-| installed | standard | ask | **warn**, and flag |
-| installed | strict | deny | deny, and flag |
+| installed | standard, a screen exists | ask | **warn**, and flag |
+| installed | standard, no screen | ask | ask, so `headless` applies (deny by default) |
+| installed | strict | deny | deny, not flagged |
 | installed | off | off | off |
 | not installed | (none) | ask | ask |
 
 - `warn` already lets the change through, records it in the ledger and tells Claude to report it. It now also calls `$.emcc.flag`.
-- `deny` flags as well, so the panel shows what was refused.
+- Only a bar that was lowered is flagged (`warned`, `allowed`, `excepted`). A held change lowered nothing, so it is not flagged; the ledger shows it.
 - Explicit `mode=ask` keeps the dialog with the kit.
 - Ledger, exceptions, trailers and audit are unchanged.
 
@@ -139,7 +140,7 @@ All with `claude plugin test`, each seen failing before it passes by breaking th
 
 - **witness, pure:** the phase classifier (each tool and outcome to its phase, read-only shell commands, debug after a failure until a pass); the marks (`✓ ○ ◌ ▲ ·`, a step with no edits, a `▲` that stays after a later pass, edits outside any step); `/goal` parsing (criteria, backticks, no "done when", clearing).
 - **witness, simulated session:** a sequence of tool calls ends with the pane showing the expected goal, ribbon labels, Now and marks; the pane opens on the first tool call; a narrow terminal gets the Live line; without emcc-core the notice shows; the desktop surface draws the same tree; a throwing hook leaves the tool call's result unchanged.
-- **goalpost-guard:** with emcc-core, standard lets the change through, flags it and tells Claude; strict denies and flags; without emcc-core it asks. The 78 current tests stay green, adjusted only where `inherit` now resolves differently.
+- **goalpost-guard:** with emcc-core, standard lets the change through, flags it and tells Claude; strict denies and does not flag; with no screen `inherit` asks, so `headless` applies; without emcc-core it asks. The 78 current tests stay green, adjusted only where `inherit` now resolves differently.
 - **emcc-core:** `flag` then `flagsSince` returns it; flags before `at` are left out; the cap holds.
 
 ## The recording

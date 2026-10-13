@@ -31,7 +31,7 @@
 Skills tell Claude what discipline to follow. Nothing in a skill checks that Claude followed it. A [mod](https://code.claude.com/docs/en/plugins/mods/overview) runs inside Claude Code itself, so it can:
 
 - **Record what ran.** Every test, build, lint and typecheck command and its exit code, as the engine reported them, not as Claude summed them up.
-- **Hold the line.** Gates that ask you, or refuse, when Claude tries to pass by lowering the bar: a deleted assertion, a new `@ts-ignore`, `strict` turned off, `continue-on-error` in CI, `--no-verify`.
+- **Hold the line.** Gates that ask you, report, or refuse, when Claude tries to pass by lowering the bar: a deleted assertion, a new `@ts-ignore`, `strict` turned off, `continue-on-error` in CI, `--no-verify`.
 - **Show it in one place.** One band above the prompt for every EMCC mod, instead of one line each.
 
 Every mod here has tests, states the Claude Code version it was tested with, and lists what it can reach.
@@ -110,7 +110,7 @@ claude plugin install emcc-core@emcc --config profile=strict
 
 | | Mod | What it does | What it can reach | Version |
 |---|---|---|---|---|
-| <img src="docs/icons/band.svg" width="20" height="20" align="top" alt=""> | [`emcc-core`](mods/emcc-core) | The base the others build on. Records test, build, lint and typecheck runs and edits; draws one band above the prompt with the latest result of each and the badges other mods post; sets the profile (`standard`, `strict`, `off`); `/emcc-halt` turns every gate off. | No network, no files, no processes | 0.1.1 |
+| <img src="docs/icons/band.svg" width="20" height="20" align="top" alt=""> | [`emcc-core`](mods/emcc-core) | The base the others build on. Records test, build, lint and typecheck runs and edits; draws one band above the prompt with the latest result of each and the badges other mods post; sets the profile (`standard`, `strict`, `off`); `/emcc-halt` turns every gate off. | No network, no files, no processes | 0.2.0 |
 | <img src="docs/icons/goalpost.svg" width="20" height="20" align="top" alt=""> | [`goalpost-guard`](mods/goalpost-guard) | Holds any edit or command that lowers the bar: removed, skipped or loosened tests, rewritten expected values, tests pointed at a stand-in, new suppressions, relaxed lint and type config, softened CI, lowered coverage, skipped git hooks. Asks you, or with emcc-core reports it and flags it for witness (or denies); remembers exceptions per file or project; puts what was let through in the commit as a `Goalpost-Change` trailer; `/goalposts audit` checks a branch. | Reads the files a change touches; runs `git` only for `/goalposts audit`; no network | 0.2.0 |
 
 ### Coming next

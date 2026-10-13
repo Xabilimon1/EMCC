@@ -124,9 +124,7 @@ async function detectOptions($: EngineInterface, settings: Settings): Promise<De
 
 /**
  * The EMCC profile, or null when emcc-core is not installed. `profile()` is
- * `off` while EMCC is halted, so the kill switch reaches this mod too. With
- * emcc-core, `inherit` reports instead of asking: witness shows the flag on
- * the step.
+ * `off` while EMCC is halted, so the kill switch reaches this mod too.
  */
 async function emccProfile($: EngineInterface): Promise<'standard' | 'strict' | 'off' | null> {
   try {
@@ -148,7 +146,12 @@ async function modeOf($: EngineInterface, configured: Configured): Promise<Mode>
     return configured
   }
 
-  return profile === 'strict' ? 'deny' : profile === 'standard' ? 'warn' : 'ask'
+  if (profile === 'strict') {
+    return 'deny'
+  }
+
+  // standard reports instead of asking when someone can read the report: witness shows the flag on the step
+  return profile === 'standard' && (await $.session.surfaces()).length > 0 ? 'warn' : 'ask'
 }
 
 // ---------------------------------------------------------------- ledger, badge, exceptions
@@ -179,6 +182,10 @@ async function record(
   }))
   await update($, ledger, list => [...list, ...entries].slice(-KEEP))
   await refreshBadge($)
+  // Only a bar that was lowered is flagged: a held change lowered nothing, and the ledger already shows it.
+  if (decision === 'blocked') {
+    return
+  }
   for (const finding of findings) {
     try {
       await $.emcc.flag({

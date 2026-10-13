@@ -2,7 +2,7 @@
 
 Stops Claude from making a check pass by lowering the bar. Tested with **Claude Code 2.1.287**, terminal and desktop.
 
-When a test fails, the shortest way to green is often not to fix the code but to move the goalposts: delete the assertion, skip the test, add `@ts-ignore`, turn `strict` off, put `continue-on-error` on the CI step, drop the coverage threshold, or commit with `--no-verify`. goalpost-guard reads every edit and shell command before it runs, and when one does that, it stops and asks you.
+When a test fails, the shortest way to green is often not to fix the code but to move the goalposts: delete the assertion, skip the test, add `@ts-ignore`, turn `strict` off, put `continue-on-error` on the CI step, drop the coverage threshold, or commit with `--no-verify`. goalpost-guard reads every edit and shell command before it runs, and when one does that, it stops and asks you (with emcc-core, it lets the change through, tells Claude to report it and flags it for witness).
 
 <p align="center">
   <img src="../../docs/media/goalpost-guard/demo.gif" width="880" alt="Claude Code with Haiku 4.5, told src/ is frozen, rewrites a test's expected value; goalpost-guard holds the edit; the answer goes back to Claude, which fixes src/cart.js instead">
@@ -22,7 +22,7 @@ Anything you type instead goes to Claude, word for word, as the reason the chang
 /plugin install goalpost-guard@emcc
 ```
 
-Works on its own. With [`emcc-core`](../emcc-core) installed it follows the EMCC profile and posts its count to the EMCC band.
+Works on its own. With [`emcc-core`](../emcc-core) installed it follows the EMCC profile, posts its count to the EMCC band and flags each lowered bar for witness.
 
 ## What it catches
 
@@ -43,11 +43,13 @@ Adding tests, assertions, checks and thresholds is never a finding, and neither 
 
 | Mode | What it does |
 |---|---|
-| `inherit` (default) | Follows the EMCC profile: `standard` lets it through and reports it, `strict` denies, `off` is off; both post a flag that witness shows on the step. Without emcc-core, asks |
+| `inherit` (default) | Follows the EMCC profile: `standard` lets it through and reports it (asks when there is no screen, so `headless` applies), `strict` denies, `off` is off. Without emcc-core, asks |
 | `ask` | The dialog above |
 | `deny` | Refuses the change and tells Claude to fix the code instead |
 | `warn` | Lets it through, records it, and tells Claude to report it in its summary |
 | `off` | Nothing |
+
+With emcc-core, every change that goes through lowering the bar also posts a flag that witness shows on the step; held changes do not.
 
 In `claude -p` and other runs with no screen, nobody can answer the dialog, so `ask` refuses (set `headless` to `allow` to let it through and report it instead). If goalpost-guard cannot read the file it is checking, it holds the change rather than let it through.
 
@@ -101,7 +103,7 @@ Set them in `/config`, or at install with `--config key=value`.
 ## What it hooks and calls
 
 - Hooks: `session.start`, `command.run` (`goalposts`), `tool.call` (`Edit`, `Write`, `Bash`, before they run), `ui.render` (`AbovePrompt`, the `goalposts` pane)
-- Calls: `$.fs.read` and `$.fs.exists` (the file a change touches), `$.process.run` (`git diff`, `git show` and `git ls-files`, only for `/goalposts audit`), `$.ui.ask`, `$.ui.open`, `$.ui.close`, `$.store` (exceptions), `$.state`, `$.session.cwd`, `$.session.surfaces`, `$.clock.now`, `$.command.register`, `$.emcc.profile` and `$.emcc.badge` (when emcc-core is installed)
+- Calls: `$.fs.read` and `$.fs.exists` (the file a change touches), `$.process.run` (`git diff`, `git show` and `git ls-files`, only for `/goalposts audit`), `$.ui.ask`, `$.ui.open`, `$.ui.close`, `$.store` (exceptions), `$.state`, `$.session.cwd`, `$.session.surfaces`, `$.clock.now`, `$.command.register`, `$.emcc.profile`, `$.emcc.badge` and `$.emcc.flag` (when emcc-core is installed)
 - It rewrites one thing: it adds `--trailer` flags to a `git commit` command. It never changes an edit.
 - No network.
 
@@ -117,4 +119,4 @@ Set them in `/config`, or at install with `--config key=value`.
 claude plugin test mods/goalpost-guard
 ```
 
-79 tests: the detectors (37), the gate, modes, options, exceptions, retargeted imports, trailers and audit (30), and the band and the pane on both terminal and desktop, plus the EMCC profile, badge and flags (12). Each one was seen failing before it passed, by breaking the code it checks.
+81 tests: the detectors (37), the gate, modes, options, exceptions, retargeted imports, trailers and audit (30), and the band and the pane on both terminal and desktop, plus the EMCC profile, badge and flags (14). Each one was seen failing before it passed, by breaking the code it checks.

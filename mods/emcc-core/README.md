@@ -7,7 +7,7 @@ The base EMCC mods build on. Tested with **Claude Code 2.1.287**, terminal and d
 - **One band above the prompt** with the latest result of each kind of check (`test pass`, `lint FAIL 1`), the badges other EMCC mods post, and a **Halt** button. It stays hidden until there is something to show.
 - **`/emcc`** prints the profile, the evidence and the badges.
 - **`/emcc-halt`** turns every EMCC gate off for the session, or back on. The band's Halt button does the same.
-- **Profile** (`/config`, or `claude plugin install emcc-core@emcc --config profile=strict`): `standard` (gates ask), `strict` (gates deny) or `off`.
+- **Profile** (`/config`, or `claude plugin install emcc-core@emcc --config profile=strict`): `standard` (gates report what they let through; goalpost-guard asks without a screen or without emcc-core), `strict` (gates deny) or `off`.
 
 ## For mod authors: `$.emcc`
 
