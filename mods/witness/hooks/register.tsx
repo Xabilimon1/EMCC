@@ -283,9 +283,15 @@ function endBeat(): void {
   beatTimer = null
 }
 
-/** The pane opened because the person asked (`/live`, the band's Live): the badge follows. */
+/**
+ * The pane opened because the person asked (`/live`, the band's Live): the
+ * badge follows, and an action still running pulses again (closing stopped it).
+ */
 async function showPane($: EngineInterface, where: string): Promise<boolean> {
   const placed = await openPane($, true)
+  if (placed && inFlight > 0 && !(await read($, isPaused))) {
+    startBeat($)
+  }
   queued($, where, async () => refreshBadge($))
 
   return placed
@@ -727,7 +733,8 @@ export const register: Register = on => {
 
   on('ui.close', { id: PANE }, async ($, e, next) => {
     const closed = await next(e)
-    // Closed (by the person, mostly): the line above the prompt or the badge stands in for it again.
+    // Closed (by the person, mostly): nothing shows the pulse, and the line above the prompt or the badge stands in for the pane again.
+    endBeat()
     try {
       await update($, isPlaced, () => false)
       queued($, 'ui.close', async () => refreshBadge($))

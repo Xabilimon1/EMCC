@@ -336,3 +336,89 @@ describe('closing the pane', () => {
     expect(await state($, 'isPlaced')).toBe(true)
   })
 })
+
+describe('the pulse', () => {
+  const dot = async (ui: { find: (query: { type: string; text: RegExp }) => Promise<{ props: { color?: unknown } } | undefined> }) =>
+    (await ui.find({ type: 'Text', text: /^●$/ }))?.props.color
+
+  test('the dot by Now beats once a second while an action runs', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    await prompt($, 'Fix it.')
+    const running = $.tool.call({ tool: 'Read', file_path: '/repo/a.js', holdMs: 3000 } as never)
+    await it.clock.settle()
+    const ui = await pane($)
+    const seen = [await dot(ui)]
+    for (let second = 0; second < 2; second += 1) {
+      await it.clock.advance(1000)
+      seen.push(await dot(ui))
+    }
+    expect(seen).toEqual([STONE, CLAY, STONE])
+    await it.clock.advance(1000)
+    await running
+    expect(await dot(ui)).toBeUndefined()
+    await ui.unmount()
+  })
+
+  test('closing the pane stops the beat', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    await prompt($, 'Fix it.')
+    const running = $.tool.call({ tool: 'Read', file_path: '/repo/a.js', holdMs: 5000 } as never)
+    await it.clock.settle()
+    await it.clock.advance(1000)
+    await closeByHand($)
+    const atClose = await state($, 'beat')
+    await it.clock.advance(1000)
+    expect(await state($, 'beat')).toBe(atClose)
+    await it.clock.advance(1000)
+    expect(await state($, 'beat')).toBe(atClose)
+    await it.clock.advance(2000)
+    await running
+  })
+
+  test('opened again with /live while an action runs, the dot beats again', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    await prompt($, 'Fix it.')
+    const running = $.tool.call({ tool: 'Read', file_path: '/repo/a.js', holdMs: 5000 } as never)
+    await it.clock.settle()
+    await closeByHand($)
+    await it.clock.advance(1000)
+    await command($, 'live')
+    const atOpen = await state($, 'beat')
+    await it.clock.advance(1000)
+    expect(await state($, 'beat')).toBe(!atOpen)
+    await it.clock.advance(3000)
+    await running
+    // The beat ends with the action, as before.
+    const atEnd = await state($, 'beat')
+    await it.clock.advance(2000)
+    expect(await state($, 'beat')).toBe(atEnd)
+  })
+
+  test('opened again with nothing running, it stays still', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    await prompt($, 'Fix it.')
+    await call($, it, { tool: 'Read', file_path: '/repo/a.js' })
+    await closeByHand($)
+    await command($, 'live')
+    const atOpen = await state($, 'beat')
+    await it.clock.advance(1000)
+    expect(await state($, 'beat')).toBe(atOpen)
+    await it.clock.advance(1000)
+    expect(await state($, 'beat')).toBe(atOpen)
+  })
+
+  test('opened again while paused, it stays still', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    await prompt($, 'Fix it.')
+    const running = $.tool.call({ tool: 'Read', file_path: '/repo/a.js', holdMs: 5000 } as never)
+    await it.clock.settle()
+    await closeByHand($)
+    await command($, 'live', 'pause')
+    await command($, 'live')
+    const atOpen = await state($, 'beat')
+    await it.clock.advance(1000)
+    expect(await state($, 'beat')).toBe(atOpen)
+    await it.clock.advance(4000)
+    await running
+  })
+})
