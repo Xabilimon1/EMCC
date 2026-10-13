@@ -1,8 +1,6 @@
-import type { EmccEvidenceKind } from '../types'
+import type { EmccCommandKind } from '../types'
 
-type CommandKind = Exclude<EmccEvidenceKind, 'edit'>
-
-const PATTERNS: ReadonlyArray<readonly [CommandKind, RegExp]> = [
+const PATTERNS: ReadonlyArray<readonly [EmccCommandKind, RegExp]> = [
   [
     'test',
     /\b(?:(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test|vitest|jest|pytest|python3?\s+-m\s+(?:pytest|unittest)|go\s+test|cargo\s+(?:test|nextest)|ctest|mocha|playwright\s+test|rspec|phpunit|dotnet\s+test|deno\s+test|claude\s+plugin\s+test)\b/,
@@ -22,7 +20,7 @@ const PATTERNS: ReadonlyArray<readonly [CommandKind, RegExp]> = [
  * The kinds a shell command runs, in the order checked: a chain such as
  * `npm run build && npm test` is both a build and a test.
  */
-export function kindsOf(command: string): CommandKind[] {
+export function kindsOf(command: string): EmccCommandKind[] {
   return PATTERNS.filter(([, pattern]) => pattern.test(command)).map(([kind]) => kind)
 }
 

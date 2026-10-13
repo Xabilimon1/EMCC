@@ -13,6 +13,11 @@
 export type EmccEvidenceKind = 'test' | 'build' | 'lint' | 'typecheck' | 'edit'
 
 /**
+ * The kinds a shell command can run: every evidence kind but `edit`.
+ */
+export type EmccCommandKind = Exclude<EmccEvidenceKind, 'edit'>
+
+/**
  * One observed fact. Commands carry their outcome; edits carry the file.
  * `at` is the session clock in milliseconds, as `$.clock.now()` reads it.
  */
@@ -92,7 +97,7 @@ export type Emcc = {
   flag: (input: { source: string; rule: string; file?: string; text: string }) => Promise<void>
 
   /**
-   * Every flag raised at or after `at`, oldest first.
+   * Every flag raised at or after `at`, in the order they were recorded.
    */
   flagsSince: (input: { at: number }) => Promise<EmccFlag[]>
 
@@ -100,7 +105,7 @@ export type Emcc = {
    * The evidence kinds a shell command runs, as the log classifies it:
    * `npm run build && npm test` is `['test', 'build']`, `git status` is `[]`.
    */
-  kindsOf: (input: { command: string }) => Promise<EmccEvidenceKind[]>
+  kindsOf: (input: { command: string }) => Promise<EmccCommandKind[]>
 }
 
 declare module 'claude-code' {

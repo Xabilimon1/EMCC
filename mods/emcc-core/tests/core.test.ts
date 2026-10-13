@@ -99,6 +99,23 @@ describe('flags', () => {
   })
 })
 
+describe('flag file', () => {
+  test('a flag carries its file, and one without a file has no file key', WITH_PROBE, async ($, on) => {
+    mock.clock(on, { now: 1000 })
+    await run($, 'probe-flag', 'file=src/a.test.ts tests.expected changes the values in 1 assertion')
+    await run($, 'probe-flag', 'ci continue-on-error added')
+    const kept = JSON.parse(await run($, 'probe-flags-since', '0')) as Record<string, unknown>[]
+    expect(kept[0]).toEqual({
+      source: 'probe',
+      rule: 'tests.expected',
+      file: 'src/a.test.ts',
+      text: 'changes the values in 1 assertion',
+      at: 1000,
+    })
+    expect(Object.keys(kept[1] ?? {}).sort()).toEqual(['at', 'rule', 'source', 'text'])
+  })
+})
+
 describe('kindsOf', () => {
   test('classifies a command the way the evidence log does', WITH_PROBE, async $ => {
     expect(JSON.parse(await run($, 'probe-kinds', 'npm run build && npm test'))).toEqual(['test', 'build'])

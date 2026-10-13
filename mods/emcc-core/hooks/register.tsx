@@ -7,7 +7,6 @@ import { exitCodeOf, kindsOf } from './evidence'
 const evidence = atom({ plugin: 'emcc-core', key: 'evidence' } as const, [])
 const badges = atom({ plugin: 'emcc-core', key: 'badges' } as const, [])
 const isHalted = atom({ plugin: 'emcc-core', key: 'isHalted' } as const, false)
-const flags = atom({ plugin: 'emcc-core', key: 'flags' } as const, [])
 
 const KEEP = 200
 const SHOWN: readonly EmccEvidenceKind[] = ['test', 'typecheck', 'lint', 'build']

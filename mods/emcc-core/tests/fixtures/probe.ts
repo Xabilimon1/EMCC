@@ -23,8 +23,10 @@ export const probe: Plugin = {
     on('command.run', { command: 'probe-profile' }, async $ => ({ text: await $.emcc.profile() }))
     on('command.run', { command: 'probe-halted' }, async $ => ({ text: String(await $.emcc.isHalted()) }))
     on('command.run', { command: 'probe-flag' }, async ($, e) => {
-      const [rule = '', ...words] = e.args.split(' ')
-      await $.emcc.flag({ source: 'probe', rule, text: words.join(' ') })
+      const [first = '', ...rest] = e.args.split(' ')
+      const file = first.startsWith('file=') ? first.slice('file='.length) : undefined
+      const [rule = '', ...words] = file === undefined ? [first, ...rest] : rest
+      await $.emcc.flag({ source: 'probe', rule, ...(file === undefined ? {} : { file }), text: words.join(' ') })
 
       return { text: 'done' }
     })

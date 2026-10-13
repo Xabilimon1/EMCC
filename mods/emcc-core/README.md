@@ -40,7 +40,7 @@ if (profile === 'strict') {
 | `profile()` | `standard`, `strict` or `off` (`off` also while halted) |
 | `isHalted()` | Whether the kill switch is on |
 | `flag({ source, rule, file?, text })` | Records a lowered bar for other mods to show. Not while drawing |
-| `flagsSince({ at })` | All flags raised at or after `at` |
+| `flagsSince({ at })` | All flags raised at or after `at` (ms, as `$.clock.now()` reads); the newest 200 are kept for the session |
 | `kindsOf({ command })` | The evidence kinds a shell command runs, as the log classifies it |
 
 The types are in [`types/index.d.ts`](types/index.d.ts); `/plugin-types` copies them for a mod that depends on emcc-core.
