@@ -20,6 +20,7 @@ export const probe: Plugin = {
         goal: (await $.state.get({ plugin: 'witness', key: 'goal' })).value,
         promptGoal: (await $.state.get({ plugin: 'witness', key: 'promptGoal' })).value,
         isGoalSet: (await $.state.get({ plugin: 'witness', key: 'isGoalSet' })).value,
+        goalSetAt: (await $.state.get({ plugin: 'witness', key: 'goalSetAt' })).value,
         criteria: (await $.state.get({ plugin: 'witness', key: 'criteria' })).value,
         steps: (await $.state.get({ plugin: 'witness', key: 'steps' })).value,
         edits: (await $.state.get({ plugin: 'witness', key: 'edits' })).value,

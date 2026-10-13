@@ -38,6 +38,8 @@ declare module 'claude-code' {
       goal: string
       promptGoal: string
       isGoalSet: boolean
+      /** When `/goal` was last given text (null once cleared): a criterion counts only the flags raised since. */
+      goalSetAt: number | null
       criteria: WitnessCriterion[]
       steps: WitnessStep[]
       edits: WitnessEdit[]

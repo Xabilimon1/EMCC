@@ -27,6 +27,9 @@ export function session(on: On): Session {
     isCwdBroken: false,
   }
   let nextId = 1
+  // Nothing in the test engine answers these two beneath the plugins.
+  on('prompt.submit', (_$, e) => ({ text: (e as unknown as { text: string }).text }) as never)
+  on('turn.complete', () => ({ text: '' }) as never)
   on('session.cwd', () => {
     if (it.isCwdBroken) {
       throw new Error('cwd is gone')
@@ -83,4 +86,9 @@ export async function state($: Engine, key: string): Promise<any> {
 /** What witness held as `now` at each `Peek` call, in order. Needs the `probe` plugin. */
 export async function seen($: Engine): Promise<unknown[]> {
   return JSON.parse(await command($, 'witness-seen'))
+}
+
+/** Ends Claude's turn: it answered, and it is the person's move. */
+export async function endTurn($: Engine) {
+  return $.turn.complete({ answer: 'Done.', durationMs: 0, isAborted: false, turnId: 'turn-1', reason: 'answer' } as never)
 }
