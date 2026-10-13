@@ -12,14 +12,17 @@
 </p>
 
 <p align="center">
+  <a href="#see-it-work">See it work</a>&emsp;&emsp;
   <a href="#install">Install</a>&emsp;&emsp;
   <a href="#mods">Mods</a>&emsp;&emsp;
   <a href="#what-a-mod-can-reach">What a mod can reach</a>&emsp;&emsp;
-  <a href="#quality-bar">Quality bar</a>&emsp;&emsp;
   <a href="#build-on-emcc">Build on EMCC</a>
 </p>
 
-<!-- Demo slot: a recording of an EMCC mod at work goes here. -->
+<p align="center">
+  <img src="docs/media/goalpost-guard/demo.gif" width="880" alt="Claude Code with Haiku 4.5, told src/ is frozen, rewrites a test's expected value from 24.19 to 24; goalpost-guard holds the edit and asks; the answer goes back to Claude, which fixes the rounding in src/cart.js instead, and the tests pass">
+</p>
+<p align="center"><sub>A real session, not a mock-up: Claude Code 2.1.287 with Haiku 4.5, told <code>src/</code> is frozen, tries to make a failing test pass by changing what it expects. <a href="docs/media/goalpost-guard/demo.mp4">MP4</a></sub></p>
 
 "The tests pass" is a sentence. EMCC shows you what is behind it: which checks actually ran in this session, what they returned, and gates that hold when Claude tries to get to green by lowering the bar instead of fixing the code.
 
@@ -32,6 +35,45 @@ Skills tell Claude what discipline to follow. Nothing in a skill checks that Cla
 - **Show it in one place.** One band above the prompt for every EMCC mod, instead of one line each.
 
 Every mod here has tests, states the Claude Code version it was tested with, and lists what it can reach.
+
+## See it work
+
+Every image below is a real Claude Code session, recorded from a script you can rerun ([how](docs/media/README.md)).
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/media/goalpost-guard/dialog.png" alt="The goalpost-guard question: this change test/cart.test.js changes the values in 1 assertion. Allow it? Block it, Allow once, Allow in this file, Allow in this project, or type something">
+      <p><img src="docs/icons/goalpost.svg" width="20" height="20" align="top" alt=""> <b>It asks before the bar moves.</b><br>Block it, allow it once, for the file or for the project, or tell Claude what to do instead.</p>
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/media/goalpost-guard/fixed.png" alt="The held edit shows Error editing file; Claude then fixes withTax in src/cart.js and the EMCC band reads test pass, goalposts: 1 held">
+      <p><img src="docs/icons/band.svg" width="20" height="20" align="top" alt=""> <b>Then Claude fixes the code.</b><br>The EMCC band shows the test run that passed and what was held on the way.</p>
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">
+      <img src="docs/media/goalpost-guard/ledger.png" alt="The Goalpost Guard ledger pane: an allowed change with the old and new assertion, and a held one with the assertion it removed">
+      <p><img src="docs/icons/ledger.svg" width="20" height="20" align="top" alt=""> <b>Every decision, with its lines.</b><br><code>/goalposts</code> opens the ledger: what was held or let through, and what it removed or added.</p>
+    </td>
+    <td valign="top">
+      <img src="docs/media/goalpost-guard/commit.png" alt="git log showing the commit Round tax to whole euros with the trailer Goalpost-Change: test/cart.test.js: changes the values in 1 assertion (allowed by the user: from now on in this file)">
+      <p><img src="docs/icons/commit.svg" width="20" height="20" align="top" alt=""> <b>What was let through goes in the commit.</b><br>A <code>Goalpost-Change</code> trailer, so the reviewer sees it in <code>git log</code>.</p>
+      <img src="docs/media/goalpost-guard/audit.png" alt="/goalposts audit main listing three changes that lower the bar: continue-on-error in ci.yml, an eslint-disable, and a skipped test">
+      <p><img src="docs/icons/audit.svg" width="20" height="20" align="top" alt=""> <b>Audit a branch.</b><br><code>/goalposts audit main</code> finds what already lowered the bar.</p>
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">
+      <img src="docs/media/goalpost-guard/exceptions.png" alt="The Exceptions tab with one standing exception and a Revoke button">
+      <p><img src="docs/icons/exceptions.svg" width="20" height="20" align="top" alt=""> <b>Exceptions you can take back.</b><br>They last across sessions, scoped to a file or a project.</p>
+    </td>
+    <td valign="top">
+      <img src="docs/media/goalpost-guard/rules.png" alt="The Rules tab: tests, suppressions, config, CI, coverage thresholds and skipped git hooks, each on, with a Mute button">
+      <p><img src="docs/icons/rules.svg" width="20" height="20" align="top" alt=""> <b>Six families, each switchable.</b><br>Mute one for the session; <code>/config</code> for good.</p>
+    </td>
+  </tr>
+</table>
 
 ## Install
 
@@ -66,10 +108,10 @@ claude plugin install emcc-core@emcc --config profile=strict
 
 ## Mods
 
-| Mod | What it does | What it can reach | Version |
-|---|---|---|---|
-| [`emcc-core`](mods/emcc-core) | The base the others build on. Records test, build, lint and typecheck runs and edits; draws one band above the prompt with the latest result of each and the badges other mods post; sets the profile (`standard`, `strict`, `off`); `/emcc-halt` turns every gate off. | No network, no files, no processes | 0.1.1 |
-| [`goalpost-guard`](mods/goalpost-guard) | Holds any edit or command that lowers the bar: removed, skipped or loosened tests, rewritten expected values, tests pointed at a stand-in, new suppressions, relaxed lint and type config, softened CI, lowered coverage, skipped git hooks. Asks you (or denies, or reports); remembers exceptions per file or project; puts what was let through in the commit as a `Goalpost-Change` trailer; `/goalposts audit` checks a branch. | Reads the files a change touches; runs `git` only for `/goalposts audit`; no network | 0.1.6 |
+| | Mod | What it does | What it can reach | Version |
+|---|---|---|---|---|
+| <img src="docs/icons/band.svg" width="20" height="20" align="top" alt=""> | [`emcc-core`](mods/emcc-core) | The base the others build on. Records test, build, lint and typecheck runs and edits; draws one band above the prompt with the latest result of each and the badges other mods post; sets the profile (`standard`, `strict`, `off`); `/emcc-halt` turns every gate off. | No network, no files, no processes | 0.1.1 |
+| <img src="docs/icons/goalpost.svg" width="20" height="20" align="top" alt=""> | [`goalpost-guard`](mods/goalpost-guard) | Holds any edit or command that lowers the bar: removed, skipped or loosened tests, rewritten expected values, tests pointed at a stand-in, new suppressions, relaxed lint and type config, softened CI, lowered coverage, skipped git hooks. Asks you (or denies, or reports); remembers exceptions per file or project; puts what was let through in the commit as a `Goalpost-Change` trailer; `/goalposts audit` checks a branch. | Reads the files a change touches; runs `git` only for `/goalposts audit`; no network | 0.1.6 |
 
 ### Coming next
 

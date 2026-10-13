@@ -4,10 +4,16 @@ Stops Claude from making a check pass by lowering the bar. Tested with **Claude 
 
 When a test fails, the shortest way to green is often not to fix the code but to move the goalposts: delete the assertion, skip the test, add `@ts-ignore`, turn `strict` off, put `continue-on-error` on the CI step, drop the coverage threshold, or commit with `--no-verify`. goalpost-guard reads every edit and shell command before it runs, and when one does that, it stops and asks you.
 
-> **Goalpost Guard: this change src/add.test.js removes 1 assertion. Allow it?**  
-> Block it, Allow once, Allow in this file, Allow in this project, or type something
+<p align="center">
+  <img src="../../docs/media/goalpost-guard/demo.gif" width="880" alt="Claude Code with Haiku 4.5, told src/ is frozen, rewrites a test's expected value; goalpost-guard holds the edit; the answer goes back to Claude, which fixes src/cart.js instead">
+</p>
+<p align="center"><sub>A real session with Haiku 4.5: told <code>src/</code> is frozen, it tries to change what the test expects. <a href="../../docs/media/goalpost-guard/demo.mp4">MP4</a></sub></p>
 
-Anything you type instead goes to Claude, word for word, as the reason the change was blocked ("fix the rounding in add() instead").
+<img src="../../docs/media/goalpost-guard/dialog.png" alt="Goalpost Guard: this change test/cart.test.js changes the values in 1 assertion. Allow it? Block it, Allow once, Allow in this file, Allow in this project, Type something">
+
+Anything you type instead goes to Claude, word for word, as the reason the change was blocked:
+
+<img src="../../docs/media/goalpost-guard/answer.png" alt="The fifth option filled in: Not like that. src isn't really frozen: fix the rounding in withTax and run npm test.">
 
 ## Install
 
@@ -51,6 +57,14 @@ In `claude -p` and other runs with no screen, nobody can answer the dialog, so `
 
 `/goalposts` opens a pane with three tabs (keys `1`, `2`, `3`; `p` pauses, Esc closes):
 
+<table>
+  <tr>
+    <td width="34%" valign="top"><img src="../../docs/media/goalpost-guard/ledger.png" alt="Ledger tab: an allowed change with the old and new assertion, and a held one with a button to allow it in the file"></td>
+    <td width="33%" valign="top"><img src="../../docs/media/goalpost-guard/exceptions.png" alt="Exceptions tab: one standing exception with a Revoke button"></td>
+    <td width="33%" valign="top"><img src="../../docs/media/goalpost-guard/rules.png" alt="Rules tab: six families, each on, with a Mute button"></td>
+  </tr>
+</table>
+
 - **Ledger**: every decision this session, newest first: held, allowed, standing exception or noted, the file, what the change did, and the lines it removed (`-`) or added (`+`). A held change has an **Allow in this file** button.
 - **Exceptions**: the standing ones for this project, each with **Revoke**.
 - **Rules**: each family on or off. **Mute** turns one off for this session; `/config` turns it off for good (a family off there shows `/config` instead of the button).
@@ -61,11 +75,7 @@ In `claude -p` and other runs with no screen, nobody can answer the dialog, so `
 
 Whatever was let through ends up in the next commit Claude makes, as a git trailer, so a reviewer sees it in `git log`:
 
-```
-drop zero case
-
-Goalpost-Change: src/add.test.js: removes 1 assertion (allowed by the user)
-```
+<img src="../../docs/media/goalpost-guard/commit.png" alt="git log -1: Round tax to whole euros, Goalpost-Change: test/cart.test.js: changes the values in 1 assertion (allowed by the user: from now on in this file)">
 
 Each change is reported once; a `git commit --amend` of that commit carries its trailers again, since an amend rewrites the message. A commit that fails keeps them for the next. Needs git 2.32 or later; turn it off with `commitTrailer`.
 
@@ -73,13 +83,7 @@ Each change is reported once; a `git commit --amend` of that commit carries its 
 
 Checks every change since `ref` (default `HEAD`), untracked files included, with the same rules:
 
-```
-/goalposts audit main
-
-2 changes lower the bar since main:
-- src/add.test.js removes 1 assertion: 2 → 1 assertions
-- src/c.ts adds @ts-ignore: the check still runs, it just stops reporting here
-```
+<img src="../../docs/media/goalpost-guard/audit.png" alt="/goalposts audit main: 3 changes lower the bar since main: continue-on-error in ci.yml, an eslint-disable in src/legacy.js, a skipped test in test/cart.test.js">
 
 ## Options
 
@@ -113,4 +117,4 @@ Set them in `/config`, or at install with `--config key=value`.
 claude plugin test mods/goalpost-guard
 ```
 
-77 tests: the detectors (36), the gate, modes, options, exceptions, retargeted imports, trailers and audit (30), and the band and the pane on both terminal and desktop, plus the EMCC profile and badge (11). Each one was seen failing before it passed, by breaking the code it checks.
+78 tests: the detectors (37), the gate, modes, options, exceptions, retargeted imports, trailers and audit (30), and the band and the pane on both terminal and desktop, plus the EMCC profile and badge (11). Each one was seen failing before it passed, by breaking the code it checks.
