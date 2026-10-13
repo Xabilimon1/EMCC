@@ -190,7 +190,33 @@ async function hasEmcc($: EngineInterface): Promise<boolean> {
   }
 }
 
+/** Whether emcc-core draws its band (where the badge shows): installed, and not off unless halted, as its own band decides. */
+async function emccDrawsBand($: EngineInterface): Promise<boolean> {
+  try {
+    return (await $.emcc.profile()) !== 'off' || (await $.emcc.isHalted())
+  } catch {
+    return false
+  }
+}
+
 // ---------------------------------------------------------------- proof, badge and pane
+
+/**
+ * What the engine says of the pane: placed or not (a pane opened narrow is
+ * placed once the terminal widens), or null when it cannot be asked.
+ */
+async function panesSay($: EngineInterface): Promise<boolean | null> {
+  try {
+    return (await $.ui.panes()).some(pane => pane.id === PANE && pane.isPlaced)
+  } catch {
+    return null
+  }
+}
+
+/** Whether the pane is on screen: the engine's word, else what witness last knew. */
+async function isPanePlaced($: EngineInterface): Promise<boolean> {
+  return (await panesSay($)) ?? (await read($, isPlaced))
+}
 
 type Counted = { proven: number; total: number }
 
@@ -243,7 +269,7 @@ async function refreshBadge($: EngineInterface): Promise<void> {
       return
     }
     let badge: { id: string; text?: string; tone?: 'good' | 'neutral' } = { id: 'witness' }
-    if (!(await read($, isPlaced))) {
+    if (!(await isPanePlaced($))) {
       const counted = await provenCount($)
       badge = {
         id: 'witness',
@@ -416,13 +442,15 @@ async function before($: EngineInterface, call: ToolCall, at: number, live: { is
     // The label shows the whole path.
   }
   await update($, now, () => ({ label: labelOf(call, cwd), since: at }))
-  // Checked with nothing awaited before startBeat: a call that already ended must not restart the beat.
-  if (live.isRunning) {
-    startBeat($)
-  }
   if (!(await read($, hasOpened))) {
     await update($, hasOpened, () => true)
     await openPane($, false)
+  }
+  // The dot pulses only in a pane on screen: not one closed by hand, nor one waiting for a wider terminal.
+  const placed = await isPanePlaced($)
+  // Checked with nothing awaited before startBeat: a call that already ended must not restart the beat.
+  if (live.isRunning && placed) {
+    startBeat($)
   }
 }
 
@@ -733,9 +761,13 @@ export const register: Register = on => {
 
   on('ui.close', { id: PANE }, async ($, e, next) => {
     const closed = await next(e)
-    // Closed (by the person, mostly): nothing shows the pulse, and the line above the prompt or the badge stands in for the pane again.
-    endBeat()
     try {
+      // A hook beneath may have refused the close: the pane is still there.
+      if ((await panesSay($)) === true) {
+        return closed
+      }
+      // Closed (by the person, mostly): nothing shows the pulse, and the line above the prompt or the badge stands in for the pane again.
+      endBeat()
       await update($, isPlaced, () => false)
       queued($, 'ui.close', async () => refreshBadge($))
     } catch {
@@ -769,8 +801,8 @@ export const register: Register = on => {
             {cells.length === 0 ? (
               <Text color={STONE}>{'░'.repeat(width)}</Text>
             ) : (
-              cells.map(cell => (
-                <Text color={PHASE_COLOR[cell.phase]} dimColor={cell.phase === 'waiting'}>
+              cells.map((cell, index) => (
+                <Text key={`cell-${index}`} color={PHASE_COLOR[cell.phase]} dimColor={cell.phase === 'waiting'}>
                   {'█'.repeat(cell.chars)}
                 </Text>
               ))
@@ -867,7 +899,7 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    if (e.props.hasSurvey || !(await read($, hasOpened)) || (await read($, isPlaced)) || (await hasEmcc($))) {
+    if (e.props.hasSurvey || !(await read($, hasOpened)) || (await isPanePlaced($)) || (await emccDrawsBand($))) {
       return next(e)
     }
     const { Box, Button, Text } = $.ui.resolve(e)

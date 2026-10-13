@@ -7,6 +7,8 @@ export type Session = {
   opened: { id: string; title?: string; focus?: boolean; closeOnEscape?: boolean }[]
   /** The ids of the panes closed, in order. */
   closed: string[]
+  /** While true, a close is refused and the pane stays (as a hook beneath answering without closing). */
+  refusingClose: boolean
   isWide: boolean
   failing: Set<string>
   isCwdBroken: boolean
@@ -28,7 +30,8 @@ async function settled(): Promise<void> {
 /**
  * The engine beneath witness: a repo at /repo, a clock that moves only when
  * the test moves it, a pane that is placed while `isWide`, task ids counted
- * from 1, panes that close when asked, and commands or file paths that fail while listed in `failing`.
+ * from 1, panes that close when asked (unless `refusingClose`) and that are
+ * placed while `isWide` (opened narrow, placed once it widens), and commands or file paths that fail while listed in `failing`.
  * A call given `holdMs` runs that long on the clock (start it unawaited and
  * advance the clock); a Bash call with `run_in_background` answers a
  * background task id; tools listed in `denying` are denied. A call given
@@ -44,6 +47,7 @@ export function session(on: On): Session {
     clock: mock.clock(on, { now: 0 }),
     opened: [],
     closed: [],
+    refusingClose: false,
     isWide: true,
     failing: new Set(),
     isCwdBroken: false,
@@ -53,6 +57,8 @@ export function session(on: On): Session {
   }
   current = it
   let nextId = 1
+  /** The panes open now: placed while `isWide`, so a pane opened narrow is placed once the terminal widens. */
+  const open = new Set<string>()
   // Nothing in the test engine answers these two beneath the plugins.
   on('prompt.submit', (_$, e) => ({ text: (e as unknown as { text: string }).text }) as never)
   on('turn.complete', () => ({ text: '' }) as never)
@@ -65,14 +71,20 @@ export function session(on: On): Session {
   })
   on('ui.open', (_$, e) => {
     it.opened.push(e as unknown as Session['opened'][number])
+    open.add((e as unknown as { id: string }).id)
 
     return { value: it.isWide ? { isPlaced: true } : { isPlaced: false, reason: 'too narrow' } } as never
   })
   on('ui.close', (_$, e) => {
-    it.closed.push((e as unknown as { id: string }).id)
+    const id = (e as unknown as { id: string }).id
+    it.closed.push(id)
+    if (!it.refusingClose) {
+      open.delete(id)
+    }
 
     return { value: undefined } as never
   })
+  on('ui.panes', () => ({ value: [...open].map(id => ({ id, title: id, isShown: true, isFocused: false, isPlaced: it.isWide })) }) as never)
   on('tool.call', async (_$, e) => {
     const call = e as unknown as {
       tool: string

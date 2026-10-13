@@ -8,6 +8,9 @@ import type { Plugin } from 'claude-code/testing'
  * badges as JSON. `kindsOf` reports `npm test` and `tsc` as checks (as
  * `['test']`, enough for witness, which only asks whether a command is one),
  * and for a command with `--slow` answers only after `emcc-answer`.
+ * `emcc-profile <name>` sets the configured profile and `emcc-halt` halts
+ * (the profile then reads `off`), as the real one does; the real one draws
+ * its band unless the profile is `off` and it is not halted.
  */
 export const emcc: Plugin = {
   name: 'emcc-core',
@@ -16,6 +19,8 @@ export const emcc: Plugin = {
     const evidence: { kind: string; at: number; command?: string; exitCode?: number; isOk?: boolean; file?: string }[] = []
     const flags: { source: string; rule: string; text: string; file?: string; at: number }[] = []
     const badges: unknown[] = []
+    let configured = 'standard'
+    let isHalted = false
     let answer = () => {}
     const answered = new Promise<void>(resolve => {
       answer = resolve
@@ -25,8 +30,8 @@ export const emcc: Plugin = {
       const beneath = await next(e)
       const added = {
         emcc: {
-          profile: async () => 'standard' as const,
-          isHalted: async () => false,
+          profile: async () => (isHalted ? 'off' : configured) as 'standard',
+          isHalted: async () => isHalted,
           badge: async (input: unknown) => {
             badges.push(input)
           },
@@ -58,6 +63,16 @@ export const emcc: Plugin = {
       flags.push({ source: 'goalpost-guard', rule: 'tests.expected', text: e.args, at: await $.clock.now() })
 
       return { text: 'flagged' }
+    })
+    on('command.run', { command: 'emcc-profile' }, async (_$, e) => {
+      configured = e.args.trim()
+
+      return { text: configured }
+    })
+    on('command.run', { command: 'emcc-halt' }, async () => {
+      isHalted = true
+
+      return { text: 'halted' }
     })
     on('command.run', { command: 'emcc-answer' }, async () => {
       answer()

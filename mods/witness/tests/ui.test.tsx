@@ -265,9 +265,9 @@ describe('when the pane is not placed', () => {
       expect(await ui.find({ type: 'Text', text: /engine band/ })).toBeUndefined()
       await ui.unmount()
     }
-    // A press is the person asking: the engine places the pane at any width.
-    it.isWide = true
+    // A press is the person asking: the engine places the pane at any width (here, the band drawn narrow, then wide).
     const ui = await band($)
+    it.isWide = true
     await ui.press({ key: 'live' })
     await it.clock.settle()
     expect(it.opened.at(-1)).toEqual({ id: 'witness', title: 'witness', focus: true, closeOnEscape: true })
@@ -304,6 +304,71 @@ describe('when the pane is not placed', () => {
   })
 })
 
+describe('a pane placed later, once the terminal widens', () => {
+  test('without emcc-core, the line above the prompt gives way to it', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    engineBand(on)
+    it.isWide = false
+    await call($, it, { tool: 'TaskCreate', subject: 'Fix withTax', description: 'x' })
+    const narrow = await band($)
+    expect((await narrow.find({ key: 'live' }))?.text).toBe('Live')
+    await narrow.unmount()
+    it.isWide = true
+    const wide = await band($)
+    expect(await wide.find({ type: 'Text', text: /engine band/ })).toBeDefined()
+    await wide.unmount()
+  })
+
+  test('with emcc-core, the badge clears on the next call that can change a mark', WITH_EMCC, async ($, on) => {
+    const it = session(on)
+    it.isWide = false
+    await call($, it, { tool: 'TaskCreate', subject: 'Fix withTax', description: 'x' })
+    const badges = () => command($, 'emcc-badges').then(text => JSON.parse(text) as unknown[])
+    expect((await badges()).at(-1)).toEqual({ id: 'witness', text: 'witness 0/1 proven, /live', tone: 'neutral' })
+    it.isWide = true
+    await call($, it, { tool: 'TaskUpdate', taskId: '1', status: 'in_progress' })
+    expect((await badges()).at(-1)).toEqual({ id: 'witness' })
+  })
+
+  test('its dot beats for the next action', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    it.isWide = false
+    await call($, it, { tool: 'Read', file_path: '/repo/a.js' })
+    it.isWide = true
+    const running = $.tool.call({ tool: 'Read', file_path: '/repo/a.js', holdMs: 3000 } as never)
+    await it.clock.settle()
+    const before = await state($, 'beat')
+    await it.clock.advance(1000)
+    expect(await state($, 'beat')).toBe(!before)
+    await it.clock.advance(2000)
+    await running
+  })
+})
+
+describe('emcc-core that draws no band', () => {
+  test('with its profile off, witness draws its own line above the prompt', WITH_EMCC, async ($, on) => {
+    const it = session(on)
+    engineBand(on)
+    await command($, 'emcc-profile', 'off')
+    it.isWide = false
+    await call($, it, { tool: 'TaskCreate', subject: 'Fix withTax', description: 'x' })
+    const ui = await band($)
+    expect((await ui.find({ type: 'Text', text: /proven/ }))?.text).toBe('0/1 proven ')
+    await ui.unmount()
+  })
+
+  test('halted, emcc-core draws its band, so witness leaves the line to it', WITH_EMCC, async ($, on) => {
+    const it = session(on)
+    engineBand(on)
+    await command($, 'emcc-halt')
+    it.isWide = false
+    await call($, it, { tool: 'TaskCreate', subject: 'Fix withTax', description: 'x' })
+    const ui = await band($)
+    expect(await ui.find({ type: 'Text', text: /engine band/ })).toBeDefined()
+    await ui.unmount()
+  })
+})
+
 describe('closing the pane', () => {
   test('without emcc-core, the line above the prompt comes back', WITH_PROBE, async ($, on) => {
     const it = session(on)
@@ -327,6 +392,19 @@ describe('closing the pane', () => {
     expect(await badges()).toEqual([{ id: 'witness' }])
     await closeByHand($)
     expect((await badges()).at(-1)).toEqual({ id: 'witness', text: 'witness 0/1 proven, /live', tone: 'neutral' })
+  })
+
+  test('a close that is refused leaves the pane placed', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    engineBand(on)
+    await call($, it, { tool: 'TaskCreate', subject: 'Fix withTax', description: 'x' })
+    it.refusingClose = true
+    await closeByHand($)
+    expect(it.closed).toEqual(['witness'])
+    expect(await state($, 'isPlaced')).toBe(true)
+    const ui = await band($)
+    expect(await ui.find({ type: 'Text', text: /engine band/ })).toBeDefined()
+    await ui.unmount()
   })
 
   test('another pane closing changes nothing', WITH_PROBE, async ($, on) => {
@@ -392,6 +470,37 @@ describe('the pulse', () => {
     const atEnd = await state($, 'beat')
     await it.clock.advance(2000)
     expect(await state($, 'beat')).toBe(atEnd)
+  })
+
+  test('closed by hand, the next action does not pulse', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    await prompt($, 'Fix it.')
+    await call($, it, { tool: 'Read', file_path: '/repo/a.js' })
+    await closeByHand($)
+    const running = $.tool.call({ tool: 'Read', file_path: '/repo/a.js', holdMs: 3000 } as never)
+    await it.clock.settle()
+    const atStart = await state($, 'beat')
+    await it.clock.advance(1000)
+    expect(await state($, 'beat')).toBe(atStart)
+    await it.clock.advance(1000)
+    expect(await state($, 'beat')).toBe(atStart)
+    await it.clock.advance(1000)
+    await running
+  })
+
+  test('on a terminal too narrow for the pane, nothing pulses', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    it.isWide = false
+    await prompt($, 'Fix it.')
+    const running = $.tool.call({ tool: 'Read', file_path: '/repo/a.js', holdMs: 3000 } as never)
+    await it.clock.settle()
+    const atStart = await state($, 'beat')
+    await it.clock.advance(1000)
+    expect(await state($, 'beat')).toBe(atStart)
+    await it.clock.advance(1000)
+    expect(await state($, 'beat')).toBe(atStart)
+    await it.clock.advance(1000)
+    await running
   })
 
   test('opened again with nothing running, it stays still', WITH_PROBE, async ($, on) => {
