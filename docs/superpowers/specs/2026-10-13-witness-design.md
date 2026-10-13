@@ -126,6 +126,16 @@ The phase classifier and the mark calculation are pure functions in their own fi
 
 witness installs emcc-core through its dependency. The README gives goalpost-guard as the second line. A `trust-kit` plugin that only depends on witness and goalpost-guard is worth trying once dependencies are confirmed to install from the marketplace.
 
+## Edge cases settled in review
+
+- **Whose prompt.** The goal comes only from the person's prompts (origins `composer`, `bridge`, `sdk`; no origin counts as the person). Task notifications, scheduled triggers and messages from other sessions never become the goal. A slash command, or a prompt delivered into a running turn, does not end the waiting stretch either.
+- **Subagents.** A subagent's turn end is ignored; its tool calls count as Claude's work.
+- **Parallel calls.** The ribbon's bookkeeping runs one call at a time, each with the time it really ended. Now shows the newest call and clears when the last one ends.
+- **Turn end.** The stretch from the last call to the end of the turn goes to the phase of the work, then waiting starts. A call with no phase of its own continues the work's phase, never waiting.
+- **Background and denied calls.** A shell command sent to the background proves nothing and records no run. A denied call keeps the time it took on the ribbon and records nothing else.
+- **Which step an edit belongs to.** The in-progress step started last. Each step keeps the files it edited, so a long session trimming old edits cannot turn its proof stale.
+- **Pausing** closes the waiting stretch at that moment; resuming starts the ribbon again from then. Paused time belongs to no phase.
+
 ## Failure handling
 
 - witness only observes. Every hook body is wrapped: on an exception, the tool call goes on unchanged (`next(e)`'s result is returned as is), and the pane shows `witness lost track at <event>` instead of breaking.
