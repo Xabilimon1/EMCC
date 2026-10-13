@@ -70,12 +70,38 @@ let inFlight = 0
 let queue: Promise<unknown> = Promise.resolve()
 /** The badge last written, so the same one is not written again after every call. */
 let lastBadge = ''
+/** Counts the queue's steps; each writes it, see `queued`. */
+let ticks = 0
 
 function serially<T>(work: () => Promise<T>): Promise<T> {
   const run = queue.then(work)
   queue = run.catch(() => undefined)
 
   return run
+}
+
+/**
+ * Queues `work` without waiting for it: a hook hands its event on at once, and
+ * a failure in the work is recorded as `lostAt`. witness never holds a tool
+ * call, a prompt or a turn end on its own bookkeeping.
+ */
+function queued($: EngineInterface, where: string, work: () => Promise<void>): void {
+  serially(async () => {
+    // A dispatch's reads are pinned to one moment until it writes, and this
+    // step may run long after its hook began: writing first makes its reads
+    // see what the steps before it wrote.
+    ticks += 1
+    await $.state.set({ plugin: 'witness', key: 'queueTick' }, ticks)
+    await work()
+  }).catch(() => lose($, where))
+}
+
+/** The time now, asked at once and awaited later in the queue; a failure surfaces where it is awaited. */
+function timeNow($: EngineInterface): Promise<number> {
+  const asked = $.clock.now()
+  asked.catch(() => undefined)
+
+  return asked
 }
 
 async function lose($: EngineInterface, where: string): Promise<void> {
@@ -253,7 +279,11 @@ async function addStretch($: EngineInterface, phase: WitnessPhase, start: number
   await update($, totals, sums => addedTotal(sums, phase, end - start))
 }
 
-/** Ends the person's move at `at`: the waiting so far goes to the ribbon, and work is counted from here. */
+/**
+ * Ends the person's move at `at`: the waiting so far goes to the ribbon, and
+ * work is counted from here. A call sent to the background that closes the
+ * waiting counts its wait as work; witness accepts that small undercount.
+ */
 async function closeWaiting($: EngineInterface, at: number): Promise<void> {
   const since = await read($, waitingSince)
   if (since !== null) {
@@ -263,33 +293,42 @@ async function closeWaiting($: EngineInterface, at: number): Promise<void> {
   }
 }
 
-/** Pauses watching: the waiting so far is kept, Now and the beat stop. `/live pause` and the pane's `p` both come here. */
+/**
+ * Pauses watching at once: Now and the beat stop now, and steps already queued
+ * find witness paused and record nothing. The waiting so far is kept, closed in
+ * the queue at the pause's time. `/live pause` and the pane's `p` both come here.
+ */
 async function pause($: EngineInterface): Promise<void> {
   endBeat()
-  await serially(async () => {
-    await closeWaiting($, await $.clock.now())
-    await update($, now, () => null)
-    await update($, isPaused, () => true)
-  })
+  const at = timeNow($)
+  await update($, isPaused, () => true)
+  await update($, now, () => null)
+  queued($, 'command.run', async () => closeWaiting($, await at))
 }
 
 /**
- * Watches again; the ribbon picks up from now, so paused time belongs to no
- * phase. Nothing opens a waiting stretch while paused (pause closed the open
- * one), so there is none to clear here.
+ * Watches again, in the queue, so that nothing queued while paused is recorded;
+ * the ribbon picks up from the resume, so paused time belongs to no phase.
+ * Nothing opens a waiting stretch while paused (pause closed the open one), so
+ * there is none to clear. Resumed during the person's move, the rest of that
+ * move is counted as work by the next call; witness accepts that undercount.
  */
-async function resume($: EngineInterface): Promise<void> {
-  await serially(async () => {
-    const at = await $.clock.now()
-    await update($, cursor, () => at)
+function resume($: EngineInterface): void {
+  const at = timeNow($)
+  queued($, 'command.run', async () => {
+    const resumedAt = await at
+    await update($, cursor, () => resumedAt)
     await update($, isPaused, () => false)
   })
 }
 
 // ---------------------------------------------------------------- tool calls
 
-/** Before the call runs: the waiting ends and the cursor is set first, before anything that can fail. Runs in the queue. */
+/** Before the call runs, in the queue: the waiting ends and the cursor is set first, before anything that can fail. */
 async function before($: EngineInterface, call: ToolCall, at: number): Promise<void> {
+  if (await read($, isPaused)) {
+    return
+  }
   await closeWaiting($, at)
   if ((await read($, cursor)) === null) {
     await update($, cursor, () => at)
@@ -308,22 +347,27 @@ async function before($: EngineInterface, call: ToolCall, at: number): Promise<v
   }
 }
 
-/** The in-progress step an edit belongs to: the one that went in progress last. */
+/** The in-progress step an edit belongs to: the one that went in progress last (a reopened step counts from its reopening). */
 function activeStep(list: readonly WitnessStep[]): WitnessStep | undefined {
   return list
     .filter(one => one.status === 'in_progress' && one.id !== null)
-    .reduce<WitnessStep | undefined>((best, one) => (best === undefined || (one.startedAt ?? 0) > (best.startedAt ?? 0) ? one : best), undefined)
+    .reduce<WitnessStep | undefined>(
+      (best, one) => (best === undefined || (one.lastStartedAt ?? 0) > (best.lastStartedAt ?? 0) ? one : best),
+      undefined,
+    )
 }
 
-async function after($: EngineInterface, call: ToolCall, ran: Ran): Promise<void> {
+/** After the call ran: queued, never awaited by the call. */
+function after($: EngineInterface, call: ToolCall, ran: Ran): void {
   // The beat and Now end with the last call in flight, before anything that can fail.
   inFlight = Math.max(0, inFlight - 1)
   if (inFlight === 0) {
     endBeat()
   }
-  // When the call ended, read before waiting for the queue: a call recorded late still ends where it ended.
-  const at = await $.clock.now()
-  await serially(async () => {
+  // When the call ended, asked now: a call recorded late still ends where it ended.
+  const endedAt = timeNow($)
+  queued($, 'tool.call', async () => {
+    const at = await endedAt
     if (inFlight === 0) {
       await update($, now, () => null)
     }
@@ -341,6 +385,11 @@ async function after($: EngineInterface, call: ToolCall, ran: Ran): Promise<void
     const phase = step.phase ?? workPhase(await read($, segments))
     await addStretch($, phase, (await read($, cursor)) ?? at, at)
     await update($, cursor, () => at)
+    // The main turn may have ended while this call ran: the person's move starts when the call ended, not before.
+    const since = await read($, waitingSince)
+    if (since !== null && since < at) {
+      await update($, waitingSince, () => at)
+    }
     if (isDenied) {
       return
     }
@@ -362,7 +411,16 @@ async function after($: EngineInterface, call: ToolCall, ran: Ran): Promise<void
     if (call.tool === 'TaskCreate' && !isFailed) {
       const structured = (ran.result as { task?: { id?: unknown } } | undefined)?.task?.id
       const id = typeof structured === 'string' ? structured : (/Task #(\S+) created/.exec(ran.text ?? '')?.[1] ?? null)
-      const added: WitnessStep = { id, subject: call.subject ?? '', status: 'pending', createdAt: at, startedAt: null, completedAt: null, files: [] }
+      const added: WitnessStep = {
+        id,
+        subject: call.subject ?? '',
+        status: 'pending',
+        createdAt: at,
+        startedAt: null,
+        lastStartedAt: null,
+        completedAt: null,
+        files: [],
+      }
       await update($, steps, list => [...list, added])
     }
     if (call.tool === 'TaskUpdate' && !isFailed && call.taskId !== undefined) {
@@ -383,6 +441,7 @@ async function after($: EngineInterface, call: ToolCall, ran: Ran): Promise<void
               subject: call.subject ?? one.subject,
               status,
               startedAt: status === 'in_progress' && one.startedAt === null ? at : one.startedAt,
+              lastStartedAt: status === 'in_progress' && one.status !== 'in_progress' ? at : one.lastStartedAt,
               completedAt: status === 'completed' ? (one.completedAt ?? at) : null,
             },
           ]
@@ -396,6 +455,36 @@ async function after($: EngineInterface, call: ToolCall, ran: Ran): Promise<void
 }
 
 // ---------------------------------------------------------------- register
+
+/** `/goal`: sets the goal and its criteria, or clears them; answers what it did. */
+async function setGoal($: EngineInterface, text: string): Promise<string> {
+  if (text === '') {
+    const fallback = await read($, promptGoal)
+    await update($, goal, () => fallback)
+    await update($, isGoalSet, () => false)
+    await update($, goalSetAt, () => null)
+    await update($, criteria, () => [])
+
+    return 'Goal cleared; it follows your prompt again.'
+  }
+  const parsed = parseGoal(text)
+  const count = parsed.criteria.length
+  const at = await $.clock.now()
+  await update($, criteria, () => parsed.criteria)
+  await update($, goalSetAt, () => at)
+  if (parsed.goal === '') {
+    // Only criteria: the goal keeps following the prompt.
+    const fallback = await read($, promptGoal)
+    await update($, goal, () => fallback)
+    await update($, isGoalSet, () => false)
+
+    return `${countText(count)} set; the goal follows your prompt.`
+  }
+  await update($, goal, () => parsed.goal)
+  await update($, isGoalSet, () => true)
+
+  return count === 0 ? 'Goal set.' : `Goal set with ${countText(count)}.`
+}
 
 function countText(count: number): string {
   return `${count} ${count === 1 ? 'criterion' : 'criteria'}`
@@ -414,30 +503,27 @@ export const register: Register = on => {
   })
 
   on('prompt.submit', async ($, e, next) => {
-    try {
-      await serially(async () => {
-        if (await read($, isPaused)) {
-          return
+    const at = timeNow($)
+    queued($, 'prompt.submit', async () => {
+      if (await read($, isPaused)) {
+        return
+      }
+      const isSlash = e.text.trimStart().startsWith('/')
+      // A prompt delivered into a running turn, or a slash command, starts no work: the waiting stays open.
+      if (e.turnId === undefined && !isSlash) {
+        const submittedAt = await at
+        await closeWaiting($, submittedAt)
+        await update($, cursor, () => submittedAt)
+      }
+      const kind = (e.origin as { kind: string } | undefined)?.kind
+      if (!isSlash && (kind === undefined || PERSON_ORIGINS.has(kind))) {
+        const fromPrompt = goalFromPrompt(e.text)
+        await update($, promptGoal, () => fromPrompt)
+        if (!(await read($, isGoalSet))) {
+          await update($, goal, () => fromPrompt)
         }
-        const isSlash = e.text.trimStart().startsWith('/')
-        // A prompt delivered into a running turn, or a slash command, starts no work: the waiting stays open.
-        if (e.turnId === undefined && !isSlash) {
-          const at = await $.clock.now()
-          await closeWaiting($, at)
-          await update($, cursor, () => at)
-        }
-        const kind = (e.origin as { kind: string } | undefined)?.kind
-        if (!isSlash && (kind === undefined || PERSON_ORIGINS.has(kind))) {
-          const fromPrompt = goalFromPrompt(e.text)
-          await update($, promptGoal, () => fromPrompt)
-          if (!(await read($, isGoalSet))) {
-            await update($, goal, () => fromPrompt)
-          }
-        }
-      })
-    } catch {
-      await lose($, 'prompt.submit')
-    }
+      }
+    })
 
     return next(e)
   })
@@ -448,29 +534,18 @@ export const register: Register = on => {
     }
     const call = e as unknown as ToolCall
     inFlight += 1
-    try {
-      const at = await $.clock.now()
-      await serially(() => before($, call, at))
-    } catch {
-      await lose($, 'tool.call')
-    }
+    // Queued, never awaited: the call goes on at once, and the queue still runs this before the call's own after.
+    const startedAt = timeNow($)
+    queued($, 'tool.call', async () => before($, call, await startedAt))
     let ran: Awaited<ReturnType<typeof next>>
     try {
       ran = await next(e)
     } catch (error) {
       // The call itself threw: its time was spent, nothing else is recorded, and the error goes on as it was.
-      try {
-        await after($, call, { deny: 'the call threw' })
-      } catch {
-        await lose($, 'tool.call')
-      }
+      after($, call, { deny: 'the call threw' })
       throw error
     }
-    try {
-      await after($, call, ran as unknown as Ran)
-    } catch {
-      await lose($, 'tool.call')
-    }
+    after($, call, ran as unknown as Ran)
 
     return ran
   })
@@ -480,32 +555,29 @@ export const register: Register = on => {
     if (e.agentId !== undefined) {
       return next(e)
     }
-    try {
-      if (inFlight === 0) {
-        endBeat()
-      }
-      await serially(async () => {
-        if (await read($, isPaused)) {
-          return
-        }
-        if (inFlight === 0) {
-          await update($, now, () => null)
-        }
-        if ((await read($, waitingSince)) !== null) {
-          return
-        }
-        // The turn's last stretch runs to its end, in the phase of the work before it; then the person's move.
-        const at = await $.clock.now()
-        const from = await read($, cursor)
-        if (from !== null) {
-          await addStretch($, workPhase(await read($, segments)), from, at)
-        }
-        await update($, cursor, () => at)
-        await update($, waitingSince, () => at)
-      })
-    } catch {
-      await lose($, 'turn.complete')
+    if (inFlight === 0) {
+      endBeat()
     }
+    const at = timeNow($)
+    queued($, 'turn.complete', async () => {
+      if (await read($, isPaused)) {
+        return
+      }
+      if (inFlight === 0) {
+        await update($, now, () => null)
+      }
+      if ((await read($, waitingSince)) !== null) {
+        return
+      }
+      // The turn's last stretch runs to its end, in the phase of the work before it; then the person's move.
+      const endedAt = await at
+      const from = await read($, cursor)
+      if (from !== null) {
+        await addStretch($, workPhase(await read($, segments)), from, endedAt)
+      }
+      await update($, cursor, () => endedAt)
+      await update($, waitingSince, () => endedAt)
+    })
 
     return next(e)
   })
@@ -519,12 +591,12 @@ export const register: Register = on => {
         return { text: 'witness paused for this session.' }
       }
       if (verb === 'resume') {
-        await resume($)
+        resume($)
 
         return { text: 'witness is watching again.' }
       }
       const placed = await openPane($, true)
-      await refreshBadge($)
+      queued($, 'command.run', async () => refreshBadge($))
 
       return { text: placed ? 'witness opened.' : await summaryText($) }
     } catch {
@@ -536,33 +608,10 @@ export const register: Register = on => {
 
   on('command.run', { command: 'goal' }, async ($, e) => {
     try {
-      const text = e.args.trim()
-      if (text === '') {
-        const fallback = await read($, promptGoal)
-        await update($, goal, () => fallback)
-        await update($, isGoalSet, () => false)
-        await update($, goalSetAt, () => null)
-        await update($, criteria, () => [])
+      const answer = await setGoal($, e.args.trim())
+      queued($, 'command.run', async () => refreshBadge($))
 
-        return { text: 'Goal cleared; it follows your prompt again.' }
-      }
-      const parsed = parseGoal(text)
-      const count = parsed.criteria.length
-      const at = await $.clock.now()
-      await update($, criteria, () => parsed.criteria)
-      await update($, goalSetAt, () => at)
-      if (parsed.goal === '') {
-        // Only criteria: the goal keeps following the prompt.
-        const fallback = await read($, promptGoal)
-        await update($, goal, () => fallback)
-        await update($, isGoalSet, () => false)
-
-        return { text: `${countText(count)} set; the goal follows your prompt.` }
-      }
-      await update($, goal, () => parsed.goal)
-      await update($, isGoalSet, () => true)
-
-      return { text: count === 0 ? 'Goal set.' : `Goal set with ${countText(count)}.` }
+      return { text: answer }
     } catch {
       await lose($, 'command.run')
 

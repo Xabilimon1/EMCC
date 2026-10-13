@@ -12,6 +12,15 @@ export type Session = {
   denying: Set<string>
   /** What a TaskCreate answers: the structured result, the text, or both. */
   taskAnswer: 'both' | 'structured' | 'text'
+  /** The tools whose calls reached the engine beneath witness, in order. */
+  reached: string[]
+}
+
+/** The session the running test made: the helpers settle its clock, so witness's queued work is done before they look. */
+let current: Session | null = null
+
+async function settled(): Promise<void> {
+  await current?.clock.settle()
 }
 
 /**
@@ -20,11 +29,13 @@ export type Session = {
  * from 1, and commands or file paths that fail while listed in `failing`.
  * A call given `holdMs` runs that long on the clock (start it unawaited and
  * advance the clock); a Bash call with `run_in_background` answers a
- * background task id; tools listed in `denying` are denied; a tool called
- * `Crash` throws.
+ * background task id; tools listed in `denying` are denied. A call given
+ * `crash` makes this hook throw: the engine skips a hook that throws, and with
+ * nothing else beneath, the call rejects with `no implementation for tool.call`.
  *
- * A test's own hooks may not read `$.state`, so reading witness's state (`state`)
- * and what `Peek` saw (`seen`) needs the `probe` plugin: `{ plugins: [probe] }`.
+ * witness records in a queue it does not wait for, so every helper here lets
+ * the clock settle first. A test's own hooks may not read `$.state`, so reading
+ * witness's state (`state`) needs the `probe` plugin: `{ plugins: [probe] }`.
  */
 export function session(on: On): Session {
   const it: Session = {
@@ -35,7 +46,9 @@ export function session(on: On): Session {
     isCwdBroken: false,
     denying: new Set(),
     taskAnswer: 'both',
+    reached: [],
   }
+  current = it
   let nextId = 1
   // Nothing in the test engine answers these two beneath the plugins.
   on('prompt.submit', (_$, e) => ({ text: (e as unknown as { text: string }).text }) as never)
@@ -53,11 +66,20 @@ export function session(on: On): Session {
     return { value: it.isWide ? { isPlaced: true } : { isPlaced: false, reason: 'too narrow' } } as never
   })
   on('tool.call', async (_$, e) => {
-    const call = e as unknown as { tool: string; command?: string; subject?: string; taskId?: string; holdMs?: number; run_in_background?: boolean }
+    const call = e as unknown as {
+      tool: string
+      command?: string
+      subject?: string
+      taskId?: string
+      holdMs?: number
+      run_in_background?: boolean
+      crash?: boolean
+    }
+    it.reached.push(call.tool)
     if (call.holdMs !== undefined) {
       await it.clock.sleep(call.holdMs)
     }
-    if (call.tool === 'Crash') {
+    if (call.crash === true) {
       throw new Error('the tool crashed')
     }
     if (it.denying.has(call.tool)) {
@@ -93,17 +115,26 @@ export function session(on: On): Session {
 /** Moves the clock `ms` on, then makes the call: the call's segment lasts `ms`. */
 export async function call($: Engine, it: Session, input: Record<string, unknown>, ms = 1000) {
   await it.clock.advance(ms)
+  const ran = await $.tool.call(input as never)
+  await settled()
 
-  return $.tool.call(input as never)
+  return ran
 }
 
 /** A prompt; with no `origin`, the person typed it. */
 export async function prompt($: Engine, text: string, extra: { origin?: { kind: string }; turnId?: string } = {}) {
-  return $.prompt.submit({ text, ...extra } as never)
+  const sent = await $.prompt.submit({ text, ...extra } as never)
+  await settled()
+
+  return sent
 }
 
 export async function command($: Engine, name: string, args = ''): Promise<string> {
-  return (await $.command.run({ command: name, args } as never)).text ?? ''
+  await settled()
+  const text = (await $.command.run({ command: name, args } as never)).text ?? ''
+  await settled()
+
+  return text
 }
 
 /** What witness holds under `key`, as JSON: `null` when it holds nothing. Needs the `probe` plugin. */
@@ -111,16 +142,13 @@ export async function state($: Engine, key: string): Promise<any> {
   return JSON.parse(await command($, 'witness-state'))[key] ?? null
 }
 
-/** What witness held as `now` at each `Peek` call, in order. Needs the `probe` plugin. */
-export async function seen($: Engine): Promise<unknown[]> {
-  return JSON.parse(await command($, 'witness-seen'))
-}
-
 /** Ends Claude's turn (it answered, and it is the person's move), or a subagent's with `agentId`. */
 export async function endTurn($: Engine, agentId?: string) {
   const ended = { answer: 'Done.', durationMs: 0, isAborted: false, turnId: 'turn-1', reason: 'answer' }
+  const done = await $.turn.complete((agentId === undefined ? ended : { ...ended, agentId }) as never)
+  await settled()
 
-  return $.turn.complete((agentId === undefined ? ended : { ...ended, agentId }) as never)
+  return done
 }
 
 /** Makes the call and holds it `ms` on the clock: the call itself lasts `ms`. */
@@ -128,6 +156,8 @@ export async function hold($: Engine, it: Session, input: Record<string, unknown
   const ran = $.tool.call({ ...input, holdMs: ms } as never)
   await it.clock.settle()
   await it.clock.advance(ms)
+  const done = await ran
+  await settled()
 
-  return ran
+  return done
 }

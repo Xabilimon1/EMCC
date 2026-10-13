@@ -10,6 +10,7 @@ const step = (extra: Partial<WitnessStep> = {}): WitnessStep => ({
   createdAt: 0,
   startedAt: 100,
   completedAt: 900,
+  lastStartedAt: 100,
   files: [],
   ...extra,
 })

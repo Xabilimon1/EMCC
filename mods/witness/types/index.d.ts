@@ -16,7 +16,10 @@ export type WitnessStep = {
   subject: string
   status: WitnessStepStatus
   createdAt: number
+  /** When it first went in progress: its proof counts from here. */
   startedAt: number | null
+  /** When it last went in progress (a reopened step again): an edit goes to the step started last. */
+  lastStartedAt: number | null
   completedAt: number | null
   /** The files edited while it was in progress, each once: kept here because the edit list is capped. */
   files: string[]
@@ -58,6 +61,8 @@ declare module 'claude-code' {
       isPlaced: boolean
       isPaused: boolean
       lostAt: string | null
+      /** Written at the start of every queued step, so the step's reads are fresh; it means nothing else. */
+      queueTick: number
     }
   }
 }

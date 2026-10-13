@@ -2,7 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import { emcc } from './fixtures/emcc'
 import { probe } from './fixtures/probe'
-import { call, command, endTurn, hold, prompt, seen, session, state } from './fixtures/session'
+import { call, command, endTurn, hold, prompt, session, state } from './fixtures/session'
 
 const WITH_EMCC = { plugins: [emcc, probe] }
 const WITH_PROBE = { plugins: [probe] }
@@ -168,6 +168,14 @@ describe('the ribbon', () => {
     await it.clock.advance(1000)
     await running
     expect(await state($, 'now')).toBeNull()
+    // The call's time is work, and the person's move starts when it ended: no time is counted twice.
+    await it.clock.advance(4000)
+    await prompt($, 'Next.')
+    expect(lengths(await state($, 'segments'))).toEqual([
+      ['explore', 0, 1000],
+      ['waiting', 1000, 5000],
+    ])
+    expect(await state($, 'totals')).toEqual({ explore: 1000, waiting: 4000 })
   })
 
   test('a prompt delivered into a running turn moves nothing', WITH_PROBE, async ($, on) => {
@@ -233,6 +241,54 @@ describe('the ribbon', () => {
     expect(await state($, 'totals')).toEqual({ verify: 500, explore: 500 })
   })
 
+  test('a slow answer for one call never holds another call', WITH_EMCC, async ($, on) => {
+    const it = session(on)
+    await prompt($, 'Fix it.')
+    const check = $.tool.call({ tool: 'Bash', command: 'npm test --slow', holdMs: 500 } as never)
+    await it.clock.settle()
+    await it.clock.advance(500)
+    // The check's record now waits for emcc-core; a read made meanwhile must reach the tool and come back.
+    let isBack = false
+    const reading = $.tool.call({ tool: 'Read', file_path: '/repo/a.js' } as never).then(ran => {
+      isBack = true
+
+      return ran
+    })
+    // A prompt and a turn end meanwhile are handed on at once too.
+    let isPromptIn = false
+    const prompted = $.prompt.submit({ text: 'Also the README.', turnId: 'turn-1' } as never).then(() => {
+      isPromptIn = true
+    })
+    let isTurnOver = false
+    const ended = $.turn.complete({ answer: '', durationMs: 0, isAborted: false, turnId: 'turn-1', reason: 'answer' } as never).then(() => {
+      isTurnOver = true
+    })
+    await it.clock.settle()
+    expect(it.reached).toEqual(['Bash', 'Read'])
+    expect([isBack, isPromptIn, isTurnOver]).toEqual([true, true, true])
+    await command($, 'emcc-answer')
+    await Promise.all([check, reading, prompted, ended])
+    expect(lengths(await state($, 'segments'))).toEqual([['verify', 0, 500]])
+  })
+
+  test('the beat goes on until the last call in flight ends', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    await prompt($, 'Fix it.')
+    const short = $.tool.call({ tool: 'Read', file_path: '/repo/a.js', holdMs: 1500 } as never)
+    const long = $.tool.call({ tool: 'Grep', pattern: 'withTax', holdMs: 4500 } as never)
+    await it.clock.settle()
+    await it.clock.advance(1500)
+    await short
+    const afterShort = (await state($, 'beat')) ?? false
+    await it.clock.advance(1000)
+    expect((await state($, 'beat')) ?? false).toBe(!afterShort)
+    await it.clock.advance(2000)
+    await long
+    const afterLong = (await state($, 'beat')) ?? false
+    await it.clock.advance(2000)
+    expect((await state($, 'beat')) ?? false).toBe(afterLong)
+  })
+
   test('a denied call took its time, and changes nothing else', WITH_EMCC, async ($, on) => {
     const it = session(on)
     await prompt($, 'Fix it.')
@@ -274,13 +330,30 @@ describe('steps, edits and runs', () => {
     const it = session(on)
     await call($, it, { tool: 'TaskCreate', subject: 'Fix withTax', description: 'x' })
     await call($, it, { tool: 'TaskCreate', subject: 'Update README', description: 'x' })
+    await call($, it, { tool: 'TaskUpdate', taskId: '1', status: 'in_progress' })
+    await call($, it, { tool: 'TaskUpdate', taskId: '2', status: 'in_progress' })
+    await call($, it, EDIT)
+    expect(((await state($, 'edits')) as { stepId: string | null }[]).map(one => one.stepId)).toEqual(['2'])
+    expect(((await state($, 'steps')) as { id: string; files: string[] }[]).map(one => [one.id, one.files])).toEqual([
+      ['1', []],
+      ['2', ['/repo/src/cart.js']],
+    ])
+  })
+
+  test('a step reopened is the one in progress last', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    await call($, it, { tool: 'TaskCreate', subject: 'Fix withTax', description: 'x' })
+    await call($, it, { tool: 'TaskCreate', subject: 'Update README', description: 'x' })
+    await call($, it, { tool: 'TaskUpdate', taskId: '1', status: 'in_progress' })
+    await call($, it, { tool: 'TaskUpdate', taskId: '1', status: 'completed' })
     await call($, it, { tool: 'TaskUpdate', taskId: '2', status: 'in_progress' })
     await call($, it, { tool: 'TaskUpdate', taskId: '1', status: 'in_progress' })
     await call($, it, EDIT)
     expect(((await state($, 'edits')) as { stepId: string | null }[]).map(one => one.stepId)).toEqual(['1'])
-    expect(((await state($, 'steps')) as { id: string; files: string[] }[]).map(one => [one.id, one.files])).toEqual([
-      ['1', ['/repo/src/cart.js']],
-      ['2', []],
+    const steps = (await state($, 'steps')) as { id: string; startedAt: number; lastStartedAt: number }[]
+    expect(steps.map(one => [one.id, one.startedAt, one.lastStartedAt])).toEqual([
+      ['1', 3000, 6000],
+      ['2', 5000, 5000],
     ])
   })
 
@@ -317,8 +390,12 @@ describe('steps, edits and runs', () => {
 
   test('Now names the action while it runs and clears after', WITH_EMCC, async ($, on) => {
     const it = session(on)
-    await call($, it, { tool: 'Peek' })
-    expect(await seen($)).toEqual([{ label: 'uses Peek', since: 1000 }])
+    await it.clock.advance(1000)
+    const running = $.tool.call({ tool: 'Peek', holdMs: 1000 } as never)
+    await it.clock.settle()
+    expect(await state($, 'now')).toEqual({ label: 'uses Peek', since: 1000 })
+    await it.clock.advance(1000)
+    await running
     expect(await state($, 'now')).toBeNull()
   })
 })
@@ -332,6 +409,17 @@ describe('the badge', () => {
     await call($, it, EDIT)
     await call($, it, EDIT)
     await call($, it, { tool: 'TaskCreate', subject: 'Fix withTax', description: 'x' })
+    expect(JSON.parse(await command($, 'emcc-badges'))).toEqual([
+      { id: 'witness', text: 'witness 0/0 proven, /live', tone: 'neutral' },
+      { id: 'witness', text: 'witness 0/1 proven, /live', tone: 'neutral' },
+    ])
+  })
+
+  test('/goal redraws it', WITH_EMCC, async ($, on) => {
+    const it = session(on)
+    it.isWide = false
+    await call($, it, EDIT)
+    await command($, 'goal', 'fix withTax; done when `npm test` passes')
     expect(JSON.parse(await command($, 'emcc-badges'))).toEqual([
       { id: 'witness', text: 'witness 0/0 proven, /live', tone: 'neutral' },
       { id: 'witness', text: 'witness 0/1 proven, /live', tone: 'neutral' },
@@ -388,6 +476,25 @@ describe('opening and pausing', () => {
     expect(await state($, 'now')).toBeNull()
   })
 
+  test('a pause takes effect at once, even while a call is being recorded', WITH_EMCC, async ($, on) => {
+    const it = session(on)
+    await prompt($, 'Fix it.')
+    const check = $.tool.call({ tool: 'Bash', command: 'npm test --slow', holdMs: 500 } as never)
+    const reading = $.tool.call({ tool: 'Read', file_path: '/repo/a.js', holdMs: 2000 } as never)
+    await it.clock.settle()
+    await it.clock.advance(500)
+    // The check's record waits for emcc-core and holds the queue; a grep starts behind it.
+    const grep = $.tool.call({ tool: 'Grep', pattern: 'withTax', holdMs: 1000 } as never)
+    await it.clock.settle()
+    expect(await command($, 'live', 'pause')).toBe('witness paused for this session.')
+    expect(await state($, 'now')).toBeNull()
+    await command($, 'emcc-answer')
+    expect(await state($, 'now')).toBeNull()
+    await it.clock.advance(1500)
+    await Promise.all([check, reading, grep])
+    expect(await state($, 'now')).toBeNull()
+  })
+
   test('pausing while it is the person’s move keeps the waiting so far', WITH_PROBE, async ($, on) => {
     const it = session(on)
     await prompt($, 'Fix it.')
@@ -421,13 +528,48 @@ describe('opening and pausing', () => {
     expect(lengths(await state($, 'segments'))).toEqual([['explore', 0, 1000]])
   })
 
-  test('a call that throws keeps its time, clears Now, and throws on as it was', WITH_PROBE, async ($, on) => {
+  test('a call that throws keeps its time, records nothing else, and rejects as it would without witness', WITH_PROBE, async ($, on) => {
     const it = session(on)
-    await prompt($, 'Fix it.')
-    await call($, it, { tool: 'Read', file_path: '/repo/a.js' })
-    await expect(call($, it, { tool: 'Crash' })).rejects.toThrow()
+    const rejection = async (input: Record<string, unknown>) => {
+      try {
+        await call($, it, input)
+      } catch (error) {
+        return (error as Error).message
+      }
+
+      return 'resolved'
+    }
+    await command($, 'live', 'pause')
+    const unwatched = await rejection({ tool: 'Bash', command: 'npm test', crash: true })
+    expect(unwatched).toContain('no implementation for tool.call')
+    await command($, 'live', 'resume')
+    expect(await rejection({ tool: 'Bash', command: 'npm test', crash: true })).toBe(unwatched)
+    expect(await rejection({ ...EDIT, crash: true })).toBe(unwatched)
     expect(await state($, 'now')).toBeNull()
-    expect(lengths(await state($, 'segments'))).toEqual([['explore', 0, 2000]])
+    expect((await state($, 'runs')) ?? []).toEqual([])
+    expect((await state($, 'edits')) ?? []).toEqual([])
+    // The crashed check had no outcome, so it is no check: its time goes to the phase in progress.
+    expect(lengths(await state($, 'segments'))).toEqual([
+      ['explore', 1000, 2000],
+      ['implement', 2000, 3000],
+    ])
+  })
+
+  test('the first call of a session, with no prompt before it, starts where it starts', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    await it.clock.advance(1000)
+    await hold($, it, { tool: 'Read', file_path: '/repo/a.js' }, 1000)
+    expect(lengths(await state($, 'segments'))).toEqual([['explore', 1000, 2000]])
+  })
+
+  test('a failure at session start is recorded, and the session starts', WITH_PROBE, async ($, on) => {
+    session(on)
+    on('session.start', () => ({ cwd: '/repo' }) as never)
+    on('command.register', () => {
+      throw new Error('no commands here')
+    })
+    expect(await $.session.start({ cwd: '/repo', surface: null, isInteractive: true } as never)).toEqual({ cwd: '/repo' })
+    expect(await state($, 'lostAt')).toBe('session.start')
   })
 
   test('without a working directory the call is still watched, and the waiting closes once', WITH_PROBE, async ($, on) => {
