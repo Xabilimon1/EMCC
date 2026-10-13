@@ -18,6 +18,8 @@ export type WitnessStep = {
   createdAt: number
   startedAt: number | null
   completedAt: number | null
+  /** The files edited while it was in progress, each once: kept here because the edit list is capped. */
+  files: string[]
 }
 
 /** An edit that went through, and the step in progress when it was made. */

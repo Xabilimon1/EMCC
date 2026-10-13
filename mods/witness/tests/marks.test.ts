@@ -10,6 +10,7 @@ const step = (extra: Partial<WitnessStep> = {}): WitnessStep => ({
   createdAt: 0,
   startedAt: 100,
   completedAt: 900,
+  files: [],
   ...extra,
 })
 const edit = (at: number, file = '/repo/src/cart.js', stepId: string | null = '1'): WitnessEdit => ({ file, at, stepId })
@@ -57,6 +58,13 @@ describe('markOf', () => {
   test('a flag beats an unknown mark: without checks, a flagged step is still flagged', async () => {
     const flags = [{ source: 'goalpost-guard', rule: 'tests.expected', text: 'lowered', at: 250 }]
     expect(markOf(step(), [edit(200)], null, flags)).toEqual({ kind: 'flagged', text: 'lowered' })
+  })
+
+  test('a step keeps its own files after the edits that named them are gone', async () => {
+    // The capped edit list no longer holds the step's own edits; its files still say which they were.
+    const mine = step({ files: ['/repo/src/cart.js'] })
+    expect(markOf(mine, [edit(400, '/repo/README.md', '2')], [pass(300)], [])).toMatchObject({ kind: 'proven' })
+    expect(markOf(mine, [edit(400, '/repo/src/cart.js', '2')], [pass(300)], [])).toEqual({ kind: 'stale', editsAfter: 1 })
   })
 
   test('edits no step owns count against every proof', async () => {

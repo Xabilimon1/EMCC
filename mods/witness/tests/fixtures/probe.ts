@@ -6,14 +6,20 @@ import type { Plugin } from 'claude-code/testing'
  * whose scanned source does not spell the call, and the test engine has no
  * `$.state`). `witness-state` answers every value as one JSON object; a tool
  * called `Peek` records what witness holds as `now` while it runs, and
- * `witness-seen` answers those records as a JSON array. Every read is written
- * out with literal `plugin` and `key`, as the scan requires.
+ * `witness-seen` answers those records as a JSON array. `witness-break <key>`
+ * makes every write of witness's `key` fail from then on (empty mends it) for
+ * `hasOpened` (written only before the first tool call runs), `runs` (only
+ * after a shell command ran), `criteria` (only by `/goal`) and `isPaused` (only
+ * by `/live pause` and `resume`): how a test makes witness fail at a chosen
+ * point. Every read is written out with literal `plugin` and `key`, as the
+ * scan requires.
  */
 export const probe: Plugin = {
   name: 'witness-probe',
   tier: 'user',
   register(on) {
     const seen: unknown[] = []
+    let broken = ''
 
     on('command.run', { command: 'witness-state' }, async $ => {
       const all = {
@@ -40,6 +46,25 @@ export const probe: Plugin = {
 
       return { text: JSON.stringify(all) }
     })
+    on('command.run', { command: 'witness-break' }, async (_$, e) => {
+      broken = e.args.trim()
+
+      return { text: broken === '' ? 'mended' : `breaking ${broken}` }
+    })
+    // A write of `undefined` is refused by the host, and the refusal reaches
+    // witness's own `$.state.set` (a hook that throws is only skipped).
+    on('state.set', { plugin: 'witness', key: 'hasOpened' }, async (_$, e, next) =>
+      next(broken === 'hasOpened' ? ({ ...e, value: undefined } as never) : e),
+    )
+    on('state.set', { plugin: 'witness', key: 'runs' }, async (_$, e, next) =>
+      next(broken === 'runs' ? ({ ...e, value: undefined } as never) : e),
+    )
+    on('state.set', { plugin: 'witness', key: 'criteria' }, async (_$, e, next) =>
+      next(broken === 'criteria' ? ({ ...e, value: undefined } as never) : e),
+    )
+    on('state.set', { plugin: 'witness', key: 'isPaused' }, async (_$, e, next) =>
+      next(broken === 'isPaused' ? ({ ...e, value: undefined } as never) : e),
+    )
     on('command.run', { command: 'witness-seen' }, async () => ({ text: JSON.stringify(seen) }))
     on('tool.call', async ($, e, next) => {
       if ((e as unknown as { tool: string }).tool === 'Peek') {

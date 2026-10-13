@@ -53,7 +53,8 @@ export function markOf(
   if (proof === undefined) {
     return { kind: 'unproven' }
   }
-  const files = new Set(edits.filter(one => step.id !== null && one.stepId === step.id).map(one => one.file))
+  // The step's own files, kept with it because the edit list is capped; with none, the listed edits that name it.
+  const files = new Set(step.files.length > 0 ? step.files : edits.filter(one => step.id !== null && one.stepId === step.id).map(one => one.file))
   const editsAfter = edits.filter(one => one.at > proof.at && (files.size === 0 || files.has(one.file))).length
 
   return editsAfter === 0 ? { kind: 'proven', by: proof.command ?? proof.kind, at: proof.at } : { kind: 'stale', editsAfter }
