@@ -1,11 +1,11 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
-import type { WitnessPhase, WitnessSegment, WitnessStep } from '../types'
+import type { WitnessCriterion, WitnessPhase, WitnessSegment, WitnessStep } from '../types'
 import { collapsed, goalFromPrompt, parseGoal } from './goal'
 import { criterionMarkOf, markOf } from './marks'
-import type { Check, Flag } from './marks'
-import { addedTotal, appended, phaseOf } from './phases'
+import type { Check, CriterionMark, Flag, Mark } from './marks'
+import { addedTotal, appended, durationText, phaseOf, ribbonOf } from './phases'
 
 const PANE = 'witness'
 const KEEP_EDITS = 500
@@ -194,20 +194,39 @@ async function hasEmcc($: EngineInterface): Promise<boolean> {
 
 type Counted = { proven: number; total: number }
 
-async function provenCount($: EngineInterface): Promise<Counted> {
+/** Every step and criterion with its mark, computed now; `hasProof` is false without emcc-core. */
+type Marked = {
+  hasProof: boolean
+  steps: { step: WitnessStep; mark: Mark }[]
+  criteria: { criterion: WitnessCriterion; mark: CriterionMark }[]
+}
+
+async function marksNow($: EngineInterface): Promise<Marked> {
   const facts = await emccFacts($)
   const editList = await read($, edits)
   const runList = await read($, runs)
-  const stepMarks = (await read($, steps)).map(step => markOf(step, editList, facts?.checks ?? null, facts?.flags ?? null))
+  const stepMarks = (await read($, steps)).map(step => ({ step, mark: markOf(step, editList, facts?.checks ?? null, facts?.flags ?? null) }))
   // A criterion answers only for the flags raised since /goal set it.
   const setAt = (await read($, goalSetAt)) ?? 0
   const criterionFlags = facts === null ? null : facts.flags.filter(flag => flag.at >= setAt)
-  const criterionMarks = (await read($, criteria)).map(one => criterionMarkOf(one, runList, editList, criterionFlags))
-  const proven =
-    stepMarks.filter(mark => mark.kind === 'proven').length +
-    criterionMarks.filter(mark => mark.kind === 'proven' || mark.kind === 'ticked').length
+  const criterionMarks = (await read($, criteria)).map(criterion => ({
+    criterion,
+    mark: criterionMarkOf(criterion, runList, editList, criterionFlags),
+  }))
 
-  return { proven, total: stepMarks.length + criterionMarks.length }
+  return { hasProof: facts !== null, steps: stepMarks, criteria: criterionMarks }
+}
+
+function countOf(marked: Marked): Counted {
+  const proven =
+    marked.steps.filter(one => one.mark.kind === 'proven').length +
+    marked.criteria.filter(one => one.mark.kind === 'proven' || one.mark.kind === 'ticked').length
+
+  return { proven, total: marked.steps.length + marked.criteria.length }
+}
+
+async function provenCount($: EngineInterface): Promise<Counted> {
+  return countOf(await marksNow($))
 }
 
 async function summaryText($: EngineInterface): Promise<string> {
@@ -262,6 +281,56 @@ function startBeat($: EngineInterface): void {
 function endBeat(): void {
   beatTimer?.cancel()
   beatTimer = null
+}
+
+/** The pane opened because the person asked (`/live`, the band's Live): the badge follows. */
+async function showPane($: EngineInterface, where: string): Promise<boolean> {
+  const placed = await openPane($, true)
+  queued($, where, async () => refreshBadge($))
+
+  return placed
+}
+
+// ---------------------------------------------------------------- the looks
+
+type Look = { glyph: string; color?: string; note: string }
+
+function editsText(count: number): string {
+  return `proven before ${count} ${count === 1 ? 'edit' : 'edits'}`
+}
+
+function stepLook(mark: Mark, nowAt: number): Look {
+  switch (mark.kind) {
+    case 'proven':
+      return { glyph: '✓', color: OLIVE, note: `${mark.by} passed ${durationText(nowAt - mark.at)} ago` }
+    case 'unproven':
+      return { glyph: '○', color: STONE, note: 'no proof' }
+    case 'stale':
+      return { glyph: '◌', color: STONE, note: editsText(mark.editsAfter) }
+    case 'flagged':
+      return { glyph: '▲', color: CLAY, note: mark.text }
+    case 'pending':
+      return { glyph: '·', color: mark.isActive ? undefined : STONE, note: mark.isActive ? 'in progress' : '' }
+    case 'unknown':
+      return { glyph: '○', color: STONE, note: '' }
+  }
+}
+
+function criterionLook(mark: CriterionMark, nowAt: number): Look {
+  switch (mark.kind) {
+    case 'proven':
+      return { glyph: '✓', color: OLIVE, note: `passed ${durationText(nowAt - mark.at)} ago` }
+    case 'failing':
+      return { glyph: '✗', color: CLAY, note: `failed ${durationText(nowAt - mark.at)} ago` }
+    case 'stale':
+      return { glyph: '◌', color: STONE, note: editsText(mark.editsAfter) }
+    case 'flagged':
+      return { glyph: '▲', color: CLAY, note: mark.text }
+    case 'ticked':
+      return { glyph: '✓', color: OLIVE, note: 'ticked by you' }
+    case 'open':
+      return { glyph: '·', color: STONE, note: '' }
+  }
 }
 
 // ---------------------------------------------------------------- the ribbon
@@ -458,6 +527,29 @@ function after($: EngineInterface, call: ToolCall, ran: Ran): void {
   })
 }
 
+// ---------------------------------------------------------------- presses
+
+/** A press in the pane or the band: a failure is recorded, never thrown at the surface. */
+async function press($: EngineInterface, work: () => Promise<void>): Promise<void> {
+  try {
+    await work()
+  } catch {
+    await lose($, 'ui.press')
+  }
+}
+
+/** The pane's `p`: the same pause and resume as `/live pause` and `/live resume`, by what the button showed. */
+function togglePause($: EngineInterface, wasPaused: boolean): Promise<void> {
+  return press($, async () => (wasPaused ? resume($) : pause($)))
+}
+
+/** A criterion's Done or Undo. */
+function tick($: EngineInterface, index: number): Promise<void> {
+  return press($, async () => {
+    await update($, criteria, list => list.map((one, at) => (at === index ? { ...one, isTicked: !one.isTicked } : one)))
+  })
+}
+
 // ---------------------------------------------------------------- register
 
 /** `/goal`: sets the goal and its criteria, or clears them; answers what it did. */
@@ -610,8 +702,7 @@ export const register: Register = on => {
 
         return { text: 'witness is watching again.' }
       }
-      const placed = await openPane($, true)
-      queued($, 'command.run', async () => refreshBadge($))
+      const placed = await showPane($, 'command.run')
 
       return { text: placed ? 'witness opened.' : await summaryText($) }
     } catch {
@@ -632,5 +723,159 @@ export const register: Register = on => {
 
       return { text: 'witness lost track at /goal.' }
     }
+  })
+
+  on('ui.close', { id: PANE }, async ($, e, next) => {
+    const closed = await next(e)
+    // Closed (by the person, mostly): the line above the prompt or the badge stands in for it again.
+    try {
+      await update($, isPlaced, () => false)
+      queued($, 'ui.close', async () => refreshBadge($))
+    } catch {
+      await lose($, 'ui.close')
+    }
+
+    return closed
+  })
+
+  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
+    const { Box, Button, Text } = $.ui.resolve(e)
+    const nowAt = await $.clock.now()
+    const marked = await marksNow($)
+    const width = Math.max(10, e.props.bodyColumns - 2)
+    const cells = ribbonOf(await read($, segments), width)
+    const sums = await read($, totals)
+    const current = await read($, now)
+    const isBeat = await read($, beat)
+    const lost = await read($, lostAt)
+    const paused = await read($, isPaused)
+    const goalText = await read($, goal)
+
+    return (
+      <Box flexDirection="column" gap={1}>
+        <Text>
+          <Text color={STONE}>Goal </Text>
+          <Text bold>{goalText === '' ? 'waiting for a prompt' : goalText}</Text>
+        </Text>
+        <Box flexDirection="column">
+          <Text>
+            {cells.length === 0 ? (
+              <Text color={STONE}>{'░'.repeat(width)}</Text>
+            ) : (
+              cells.map(cell => (
+                <Text color={PHASE_COLOR[cell.phase]} dimColor={cell.phase === 'waiting'}>
+                  {'█'.repeat(cell.chars)}
+                </Text>
+              ))
+            )}
+          </Text>
+          <Box gap={2} flexWrap="wrap">
+            {PHASES.filter(phase => sums[phase] !== undefined).map(phase => (
+              <Text key={`total-${phase}`}>
+                <Text color={PHASE_COLOR[phase]} bold>
+                  {phase}
+                </Text>
+                <Text color={STONE}> {durationText(sums[phase] ?? 0)}</Text>
+              </Text>
+            ))}
+          </Box>
+        </Box>
+        {current === null ? (
+          <Text color={STONE}>Now idle</Text>
+        ) : (
+          <Box gap={1}>
+            <Text color={isBeat ? CLAY : STONE}>●</Text>
+            <Text bold>Now</Text>
+            <Box flexShrink={1}>
+              <Text wrap="truncate-end">{current.label}</Text>
+            </Box>
+          </Box>
+        )}
+        {marked.criteria.length > 0 && (
+          <Box flexDirection="column">
+            {marked.criteria.map(({ criterion, mark }, index) => {
+              const look = criterionLook(mark, nowAt)
+
+              return (
+                <Box key={`criterion-${index}`} gap={1}>
+                  <Box width={2} flexShrink={0}>
+                    <Text color={look.color} bold>
+                      {look.glyph}
+                    </Text>
+                  </Box>
+                  <Box flexGrow={1} flexShrink={1}>
+                    <Text>{criterion.text}</Text>
+                  </Box>
+                  {criterion.command === null && index < 9 ? (
+                    <Button
+                      key={`tick-${index + 1}`}
+                      hotkey={String(index + 1)}
+                      label={criterion.isTicked ? 'Undo' : 'Done'}
+                      onPress={() => tick($, index)}
+                    />
+                  ) : (
+                    <Box flexShrink={0}>
+                      <Text color={look.color ?? STONE}>{look.note}</Text>
+                    </Box>
+                  )}
+                </Box>
+              )
+            })}
+          </Box>
+        )}
+        <Box flexDirection="column">
+          {marked.steps.length === 0 && <Text color={STONE}>No steps yet. Claude's task list shows up here.</Text>}
+          {marked.steps.map(({ step, mark }, index) => {
+            const look = stepLook(mark, nowAt)
+            const isActive = mark.kind === 'pending' && mark.isActive
+
+            return (
+              <Box key={`step-${index}`} gap={1}>
+                <Box width={2} flexShrink={0}>
+                  <Text color={look.color} bold>
+                    {look.glyph}
+                  </Text>
+                </Box>
+                <Box flexGrow={1} flexShrink={1}>
+                  <Text bold={isActive} color={mark.kind === 'pending' && !isActive ? STONE : undefined}>
+                    {step.subject}
+                  </Text>
+                </Box>
+                {look.note !== '' && (
+                  <Box flexShrink={0}>
+                    <Text color={look.color ?? STONE}>{look.note}</Text>
+                  </Box>
+                )}
+              </Box>
+            )
+          })}
+        </Box>
+        {!marked.hasProof && <Text color={STONE}>install emcc-core to see proof</Text>}
+        {lost !== null && <Text color={CLAY}>witness lost track at {lost}</Text>}
+        <Box gap={1}>
+          <Button key="pause" hotkey="p" label={paused ? 'Resume' : 'Pause'} onPress={() => togglePause($, paused)} />
+        </Box>
+      </Box>
+    )
+  })
+
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if (e.props.hasSurvey || !(await read($, hasOpened)) || (await read($, isPlaced)) || (await hasEmcc($))) {
+      return next(e)
+    }
+    const { Box, Button, Text } = $.ui.resolve(e)
+    const counted = await provenCount($)
+
+    return (
+      <Box>
+        <Text color={CLAY} bold>
+          witness{' '}
+        </Text>
+        <Text color={STONE}>
+          {counted.proven}/{counted.total} proven{' '}
+        </Text>
+        <Button key="live" label="Live" onPress={() => press($, async () => void (await showPane($, 'ui.press')))} />
+      </Box>
+    )
   })
 }

@@ -5,6 +5,8 @@ import type { Engine, MockClock } from 'claude-code/testing'
 export type Session = {
   clock: MockClock
   opened: { id: string; title?: string; focus?: boolean; closeOnEscape?: boolean }[]
+  /** The ids of the panes closed, in order. */
+  closed: string[]
   isWide: boolean
   failing: Set<string>
   isCwdBroken: boolean
@@ -26,7 +28,7 @@ async function settled(): Promise<void> {
 /**
  * The engine beneath witness: a repo at /repo, a clock that moves only when
  * the test moves it, a pane that is placed while `isWide`, task ids counted
- * from 1, and commands or file paths that fail while listed in `failing`.
+ * from 1, panes that close when asked, and commands or file paths that fail while listed in `failing`.
  * A call given `holdMs` runs that long on the clock (start it unawaited and
  * advance the clock); a Bash call with `run_in_background` answers a
  * background task id; tools listed in `denying` are denied. A call given
@@ -41,6 +43,7 @@ export function session(on: On): Session {
   const it: Session = {
     clock: mock.clock(on, { now: 0 }),
     opened: [],
+    closed: [],
     isWide: true,
     failing: new Set(),
     isCwdBroken: false,
@@ -64,6 +67,11 @@ export function session(on: On): Session {
     it.opened.push(e as unknown as Session['opened'][number])
 
     return { value: it.isWide ? { isPlaced: true } : { isPlaced: false, reason: 'too narrow' } } as never
+  })
+  on('ui.close', (_$, e) => {
+    it.closed.push((e as unknown as { id: string }).id)
+
+    return { value: undefined } as never
   })
   on('tool.call', async (_$, e) => {
     const call = e as unknown as {

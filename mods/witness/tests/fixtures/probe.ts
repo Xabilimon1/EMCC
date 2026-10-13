@@ -6,6 +6,10 @@ import type { Plugin } from 'claude-code/testing'
  * whose scanned source does not spell the call, and the test engine has no
  * `$.state`). `witness-state` answers every value as one JSON object.
  *
+ * `witness-close <id>` closes a pane: the test engine's `$` has no
+ * `ui.close`, so this is how a test raises the close the person makes with
+ * Esc or the pane's close mark (here with origin `plugin`, the probe's).
+ *
  * `witness-break <key>` makes every write of witness's `key` fail from then on
  * (empty mends it) for `hasOpened` (written only before the first tool call
  * runs), `runs` (only after a shell command ran), `criteria` (only by `/goal`)
@@ -44,6 +48,11 @@ export const probe: Plugin = {
       }
 
       return { text: JSON.stringify(all) }
+    })
+    on('command.run', { command: 'witness-close' }, async ($, e) => {
+      await $.ui.close({ id: e.args.trim() })
+
+      return { text: 'closed' }
     })
     on('command.run', { command: 'witness-break' }, async (_$, e) => {
       broken = e.args.trim()
