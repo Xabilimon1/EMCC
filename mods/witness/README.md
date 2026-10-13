@@ -10,7 +10,7 @@ Other mods show what Claude is doing. witness also marks each step of Claude's t
 
 A pane, top to bottom:
 
-- **Goal**: the first sentence of your prompt (up to 100 characters), or what you set with `/goal`. Only your own prompts count: a task notification or a message from another session never becomes the goal.
+- **Goal**: one line, cut with an ellipsis when it is long. The first sentence of your prompt (up to 100 characters), or what you typed after Claude Code's `/goal` in this session. Only your own prompts count: a task notification or a message from another session never becomes the goal.
 - **Ribbon**: where the time went, as it happens, each phase's share of the bar by time, and each phase's total under it:
 
   | Phase | When |
@@ -55,14 +55,16 @@ witness needs [`emcc-core`](../emcc-core), which keeps the evidence it marks ste
 ## Commands
 
 - `/live` opens the pane, at any width. `/live pause` stops watching for this session, and `/live resume` starts again; the ribbon picks up from the resume, so paused time belongs to no phase.
-- `/goal <goal>; done when <criterion>; <criterion>` sets the goal (`hecho cuando` works too). A criterion with a command in backticks is proven when that command passes with no edit after it; it shows `✗` if its newest run failed, `◌` after an edit, and `▲` if a lowered bar was flagged after `/goal` and before the run that passed. A criterion without a command is ticked by you, with its number key.
-- `/goal done when <criterion>` sets criteria only, and the goal keeps following your prompt.
-- `/goal` alone clears the goal and its criteria, and the goal follows your prompt again.
+- `/goal` is Claude Code's own command; witness does not register one. It reads what you type after it in this session and lets the built-in run exactly as it would without witness, so the answer you see is the built-in's.
+  - `/goal <goal>; done when <criterion>; <criterion>` sets the goal and its criteria in witness (`hecho cuando` works too). A criterion with a command in backticks is proven when that command passes with no edit after it; it shows `✗` if its newest run failed, `◌` after an edit, and `▲` if a lowered bar was flagged after `/goal` and before the run that passed. A criterion without a command is ticked by you, with its number key.
+  - `/goal done when <criterion>` sets criteria only, and the goal keeps following your prompt.
+  - `/goal` alone changes nothing in witness (it is the built-in's to answer).
+  - A goal set before witness was loaded, or in an earlier session, is not seen: witness only knows what you type after it started watching.
 - In the pane: `p` pauses and resumes, `1` to `9` tick or untick the criteria without a command, Esc closes.
 
 ## What it hooks and calls
 
-- Hooks: `session.start`, `prompt.submit`, `tool.call` (every tool, before and after it runs, never changing it), `turn.complete`, `command.run` (`live`, `goal`), `ui.close` (its pane), `ui.render` (the `witness` pane, `AbovePrompt`)
+- Hooks: `session.start`, `prompt.submit`, `tool.call` (every tool, before and after it runs, never changing it), `turn.complete`, `command.run` (`live`, and `goal` to read the built-in's, which always runs on), `ui.close` (its pane), `ui.render` (the `witness` pane, `AbovePrompt`)
 - Calls: `$.clock.now`, `$.clock.every`, `$.session.cwd`, `$.command.register`, `$.ui.open`, `$.ui.panes`, `$.ui.resolve`, `$.state.get`, `$.state.set`, `$.emcc.evidenceSince`, `$.emcc.flagsSince`, `$.emcc.kindsOf`, `$.emcc.badge`, `$.emcc.profile`, `$.emcc.isHalted`
 - Nothing is kept after the session. No network, no files, no processes, no model calls.
 
@@ -72,4 +74,4 @@ witness needs [`emcc-core`](../emcc-core), which keeps the evidence it marks ste
 claude plugin test mods/witness
 ```
 
-109 tests: goal parsing (8), phases (14), marks (15), watching a session (41), and the pane, the band and the pulse on both terminal and desktop (31). Each one was seen failing before it passed.
+114 tests: goal parsing (8), phases (14), marks (15), watching a session (45), and the pane, the band and the pulse on both terminal and desktop (32). Each one was seen failing before it passed.

@@ -14,7 +14,7 @@ The rest of the Trust kit (review-debt, review-radar, a proof card for pull requ
 
 A pane, top to bottom:
 
-1. **Goal.** The first sentence of the prompt, cut to one line. `/goal` replaces it.
+1. **Goal.** The first sentence of the prompt, on one line (`wrap="truncate-end"`: an ellipsis when it is long), with a right margin of 3 columns so it never reaches the pane's close mark in the top-right corner. What the person types after Claude Code's `/goal` replaces it.
 2. **Phase ribbon.** A bar that grows as Claude works. Each segment's width is the time spent in that phase:
 
    | Phase | When | Colour |
@@ -41,7 +41,9 @@ A pane, top to bottom:
 
 ### /goal
 
-`/goal <text>` sets the goal. Criteria follow "done when" (or "hecho cuando"), separated by `;`:
+`/goal` is Claude Code's built-in ("Set a goal Claude checks before stopping"; seen in 2.1.287). witness does not register its own: in a real session `$.command.register({ name: 'goal' })` is refused (`"/goal" refused: it is the built-in /goal`), and a hook that answered `/goal` without `next` would silently replace the built-in. Instead a `command.run` hook on `{ command: 'goal' }` reads `e.args` (a hook sees built-in commands too), updates witness's goal and criteria, and always returns `next(e)` unchanged and exactly once, so the built-in runs and its answer is what the person sees. A failure in witness's part is recorded (`lostAt: /goal`) and `next(e)` still runs.
+
+What witness reads is what is typed after `/goal` in this session. Criteria follow "done when" (or "hecho cuando"), separated by `;`:
 
 ```
 /goal fix withTax rounding; done when `npm test` passes; the README shows the new rate
@@ -50,7 +52,8 @@ A pane, top to bottom:
 - A criterion with a command in backticks is proven when that exact command (whitespace collapsed) passed after the newest edit of the session. It turns stale the same way a step does. If a lowered bar was flagged after the goal was set and at or before that passing run, the criterion shows `▲` instead of `✓`.
 - A criterion without a command is ticked by the person: the pane lists criteria with hotkeys `1`–`9`.
 - Without "done when", the whole text is the goal and there are no criteria.
-- `/goal` with no text clears it, and the goal falls back to the prompt.
+- `/goal` with no text changes nothing in witness: what the built-in does with empty args is its own, and witness does not guess it.
+- A goal set before witness was loaded, or in an earlier session, is not seen. witness has no way to ask the built-in for its current goal.
 
 Criteria are drawn above the steps when they exist.
 
@@ -107,11 +110,11 @@ Flags live in session state next to the evidence, capped like it.
 
 | Hook | What it takes |
 |---|---|
-| `session.start` | registers `/live` and `/goal` |
-| `prompt.submit` | the goal from the prompt's first sentence, unless `/goal` set one |
+| `session.start` | registers `/live` (not `/goal`, which is the built-in's) |
+| `prompt.submit` | the goal from the prompt's first sentence, unless a `/goal` typed in this session set one |
 | `tool.call` (every tool) | before `next`: sets Now, opens the pane on the first call. After `next`: closes the ribbon segment with its phase and duration, clears Now. `TaskCreate` (id from the result text `Task #N created`) and `TaskUpdate` (`taskId`, `status`, `subject`) maintain the steps. Edit, Write and NotebookEdit are attributed to the step in progress. |
 | `turn.complete` | opens a waiting segment |
-| `command.run` | `/live`, `/live pause`, `/live resume`, `/goal` |
+| `command.run` | `/live`, `/live pause`, `/live resume`; and `/goal`, which it only reads and then passes on with `next(e)` |
 | `ui.render` | `Pane` (`witness`) and `AbovePrompt` (only without emcc-core) |
 
 **Marks are computed while drawing, never stored.** For each step: its edits, then `$.emcc.evidenceSince` and `$.emcc.flagsSince` from when the step began. A mark cannot go stale in storage because none is stored.
