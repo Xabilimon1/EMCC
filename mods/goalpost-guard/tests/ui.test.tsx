@@ -170,17 +170,33 @@ async function lastBadge($: Engine): Promise<unknown> {
   return badges.at(-1)
 }
 
+async function flagsOf($: Engine): Promise<unknown[]> {
+  return JSON.parse((await $.command.run({ command: 'emcc-flags', args: '' } as never)).text ?? '[]') as unknown[]
+}
+
 describe('with emcc-core', () => {
   const WITH_EMCC = { plugins: [emcc] }
 
-  test('inherit follows the EMCC profile: standard asks, strict denies', WITH_EMCC, async ($, on) => {
+  test('inherit follows the EMCC profile: standard reports and flags, strict denies and flags', WITH_EMCC, async ($, on) => {
+    const it = world(on)
+    const out = (await edit($)) as { deny?: string; context?: string[] }
+    expect(it.asked).toEqual([])
+    expect(it.ran.length).toBe(1)
+    expect(out.context).toContain('goalpost-guard noted that this change src/add.test.ts removes 1 assertion. Say so to the user in your summary.')
+    expect(await flagsOf($)).toEqual([
+      { source: 'goalpost-guard', rule: 'tests.assertions', file: '/repo/src/add.test.ts', text: 'removes 1 assertion (let through and reported)' },
+    ])
+    await profile($, 'strict')
+    expect(said(await edit($))).toContain('goalpost-guard refused this change')
+    expect((await flagsOf($)).at(-1)).toMatchObject({ text: 'removes 1 assertion (held)' })
+    expect(it.asked).toEqual([])
+  })
+
+  test('mode ask keeps the dialog with emcc-core, and what the person allows is flagged too', { ...WITH_EMCC, options: { mode: 'ask' } }, async ($, on) => {
     const it = world(on)
     await edit($)
     expect(it.asked.length).toBe(1)
-    await profile($, 'strict')
-    const out = await edit($)
-    expect(said(out)).toContain('goalpost-guard refused this change')
-    expect(it.asked.length).toBe(1)
+    expect((await flagsOf($)).at(-1)).toMatchObject({ text: 'removes 1 assertion (allowed by the user)' })
   })
 
   test('EMCC off or halted turns goalpost-guard off, even with its own mode set', { ...WITH_EMCC, options: { mode: 'deny' } }, async ($, on) => {
@@ -192,7 +208,7 @@ describe('with emcc-core', () => {
     expect(said(await edit($))).toContain('refused')
   })
 
-  test('the count goes to the EMCC band as a badge instead of a line of its own', WITH_EMCC, async ($, on) => {
+  test('the count goes to the EMCC band as a badge instead of a line of its own', { ...WITH_EMCC, options: { mode: 'ask' } }, async ($, on) => {
     const it = world(on)
     on('ui.render', ($, e) => {
       const { Text } = $.ui.resolve(e)

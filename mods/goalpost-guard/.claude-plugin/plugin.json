@@ -1,6 +1,6 @@
 {
   "name": "goalpost-guard",
-  "version": "0.1.7",
+  "version": "0.2.0",
   "description": "Stops Claude from passing a check by lowering the bar: weakened or deleted tests, new suppressions, relaxed config, softened CI, lowered coverage, skipped git hooks.",
   "author": {
     "name": "Xabilimon1",
@@ -20,7 +20,7 @@
     "mode": {
       "type": "string",
       "title": "Mode",
-      "description": "What happens when a change lowers the bar: ask you, deny it, let it through and tell Claude to report it (warn), or nothing. inherit follows the EMCC profile (standard asks, strict denies), and asks without emcc-core",
+      "description": "What happens when a change lowers the bar: ask you, deny it, let it through and tell Claude to report it (warn), or nothing. inherit follows the EMCC profile (standard reports, strict denies, and both flag it for witness), and asks without emcc-core",
       "options": [
         "inherit",
         "ask",

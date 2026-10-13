@@ -43,7 +43,7 @@ Adding tests, assertions, checks and thresholds is never a finding, and neither 
 
 | Mode | What it does |
 |---|---|
-| `inherit` (default) | Follows the EMCC profile: `standard` asks, `strict` denies, `off` is off. Without emcc-core, asks |
+| `inherit` (default) | Follows the EMCC profile: `standard` lets it through and reports it, `strict` denies, `off` is off; both post a flag that witness shows on the step. Without emcc-core, asks |
 | `ask` | The dialog above |
 | `deny` | Refuses the change and tells Claude to fix the code instead |
 | `warn` | Lets it through, records it, and tells Claude to report it in its summary |
@@ -117,4 +117,4 @@ Set them in `/config`, or at install with `--config key=value`.
 claude plugin test mods/goalpost-guard
 ```
 
-78 tests: the detectors (37), the gate, modes, options, exceptions, retargeted imports, trailers and audit (30), and the band and the pane on both terminal and desktop, plus the EMCC profile and badge (11). Each one was seen failing before it passed, by breaking the code it checks.
+79 tests: the detectors (37), the gate, modes, options, exceptions, retargeted imports, trailers and audit (30), and the band and the pane on both terminal and desktop, plus the EMCC profile, badge and flags (12). Each one was seen failing before it passed, by breaking the code it checks.

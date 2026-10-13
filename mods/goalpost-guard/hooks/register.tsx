@@ -124,7 +124,9 @@ async function detectOptions($: EngineInterface, settings: Settings): Promise<De
 
 /**
  * The EMCC profile, or null when emcc-core is not installed. `profile()` is
- * `off` while EMCC is halted, so the kill switch reaches this mod too.
+ * `off` while EMCC is halted, so the kill switch reaches this mod too. With
+ * emcc-core, `inherit` reports instead of asking: witness shows the flag on
+ * the step.
  */
 async function emccProfile($: EngineInterface): Promise<'standard' | 'strict' | 'off' | null> {
   try {
@@ -146,7 +148,7 @@ async function modeOf($: EngineInterface, configured: Configured): Promise<Mode>
     return configured
   }
 
-  return profile === 'strict' ? 'deny' : 'ask'
+  return profile === 'strict' ? 'deny' : profile === 'standard' ? 'warn' : 'ask'
 }
 
 // ---------------------------------------------------------------- ledger, badge, exceptions
@@ -177,6 +179,18 @@ async function record(
   }))
   await update($, ledger, list => [...list, ...entries].slice(-KEEP))
   await refreshBadge($)
+  for (const finding of findings) {
+    try {
+      await $.emcc.flag({
+        source: 'goalpost-guard',
+        rule: finding.rule,
+        ...(finding.file === undefined ? {} : { file: finding.file }),
+        text: `${finding.title} (${TRAILER_WORDS[decision]})`,
+      })
+    } catch {
+      // emcc-core is not installed, or is older than 0.2.0: nothing to tell.
+    }
+  }
 }
 
 async function refreshBadge($: EngineInterface): Promise<void> {
