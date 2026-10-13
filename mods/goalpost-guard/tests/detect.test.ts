@@ -293,6 +293,16 @@ describe('shell commands', () => {
     expect(commandRules('rm -rf dist build')).toEqual([])
   })
 
+  test('only what rm, sed -i or a redirect touches counts, and never a heredoc or a backup', async () => {
+    expect(commandRules('rm test/cart.test.js.bak')).toEqual([])
+    expect(commandRules('mkdir -p test && sed -n 1p test/a.test.js && rm -f build/out.js')).toEqual([])
+    expect(commandRules("cat > make.sh <<'EOF'\nrm test/a.test.js\nsed -i 's/a/b/' test/a.test.js\nEOF\nchmod +x make.sh")).toEqual([])
+    expect(commandRules('cp a b; rm -f test/old.test.js')).toEqual(['tests.removed'])
+    expect(commandRules('sudo rm tests/test_api.py')).toEqual(['tests.removed'])
+    expect(commandRules('npm test 2> test/errors.test.log')).toEqual([])
+    expect(commandRules('git status > /dev/null; cat src/a.test.ts | wc -l')).toEqual([])
+  })
+
   test('narrowed test runs and snapshot rewrites are caught', async () => {
     expect(commandRules('npx jest --testPathIgnorePatterns auth')).toEqual(['tests.narrowed'])
     expect(commandRules('pytest -k "not slow and not flaky"')).toEqual(['tests.narrowed'])

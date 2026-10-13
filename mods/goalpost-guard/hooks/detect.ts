@@ -206,7 +206,13 @@ const TEST_PATH = [
   /\.(?:test|spec)\.(?:php|dart)$/,
 ]
 
+const BACKUP = /\.(?:bak|orig|rej|swp|tmp)$|~$/
+
 export function isTestFile(path: string, extra?: RegExp): boolean {
+  if (BACKUP.test(path)) {
+    return false
+  }
+
   return TEST_PATH.some(pattern => pattern.test(path)) || (extra?.test(path) ?? false)
 }
 
@@ -749,9 +755,47 @@ function withoutQuoted(command: string): string {
   return command.replace(/'[^']*'|"(?:\\.|[^"\\])*"|\$'[^']*'/g, '""').replace(/<<-?\s*['"]?(\w+)['"]?[\s\S]*?\n\1\b/g, '')
 }
 
-/** The words of the command, quotes taken off but their text kept. */
-function words(command: string): string[] {
-  return (command.match(/'[^']*'|"(?:\\.|[^"\\])*"|[^\s;&|()]+/g) ?? []).map(word => word.replace(/^['"]|['"]$/g, ''))
+type Segment = { words: string[]; redirects: string[] }
+
+/**
+ * The simple commands of a command line, split at `&&`, `||`, `;`, `|` and
+ * newlines, each as its words (quotes taken off, text kept) and the files it
+ * redirects output to. Heredoc bodies are text, not commands, so they go.
+ */
+function segmentsOf(command: string): Segment[] {
+  const text = command.replace(/<<-?\s*(['"]?)(\w+)\1[^\n]*\n[\s\S]*?\n\s*\2(?=\s|$)/g, '')
+  const tokens = text.match(/'[^']*'|"(?:\\.|[^"\\])*"|&&|\|\||[;|\n]|\d?>>?|[^\s;&|()<>]+/g) ?? []
+  const segments: Segment[] = [{ words: [], redirects: [] }]
+  let isRedirect = false
+  for (const token of tokens) {
+    const current = segments[segments.length - 1] ?? { words: [], redirects: [] }
+    if (['&&', '||', ';', '|', '\n'].includes(token)) {
+      segments.push({ words: [], redirects: [] })
+      isRedirect = false
+    } else if (/^\d?>>?$/.test(token)) {
+      isRedirect = !/^2/.test(token)
+    } else {
+      const word = token.replace(/^['"]|['"]$/g, '')
+      if (isRedirect) {
+        current.redirects.push(word)
+        isRedirect = false
+      } else {
+        current.words.push(word)
+      }
+    }
+  }
+
+  return segments.filter(segment => segment.words.length > 0 || segment.redirects.length > 0)
+}
+
+/** The words of a simple command without leading `VAR=value`, `sudo`, `command`, `env` or `xargs`. */
+function withoutPrefix(words: string[]): string[] {
+  let index = 0
+  while (index < words.length && (/^\w+=/.test(words[index] ?? '') || ['sudo', 'command', 'env', 'xargs', 'nohup', 'time'].includes(words[index] ?? ''))) {
+    index += 1
+  }
+
+  return words.slice(index)
 }
 
 const GIT_VERB = (verb: string): RegExp => new RegExp(`\\bgit\\b(?:\\s+-[cC]\\s+\\S+)*\\s+${verb}\\b[^;&|]*`, 'g')
@@ -842,33 +886,44 @@ export function inspectCommand(command: string, options: DetectOptions): Goalpos
     })
   }
 
-  const tokens = words(command)
-  const deleting = /(?:^|[\s;&|(])(?:rm|unlink|trash|git\s+rm)\s/.test(plain)
-  const editing = /(?:^|[\s;&|(])(?:sed\s+(?:-\w*\s+)*-i|perl\s+(?:-\w*\s+)*-[a-z]*i|gsed\s+-i)/.test(plain) || /(?<![<>&\d])>{1,2}\s*[^\s&>]/.test(plain)
-  if (deleting || editing) {
-    const guarded = tokens
-      .map(token => [token, GUARDED_FOR_SHELL(token, options.testPattern)] as const)
-      .filter((pair): pair is readonly [string, GoalpostCategory] => pair[1] !== null)
-    const tests = guarded.filter(([, category]) => category === 'tests').map(([token]) => token)
-    if (deleting && tests.length > 0) {
-      found.push({
-        rule: 'tests.removed',
-        file: tests[0],
-        title: `deletes ${tests.length === 1 ? 'a test file' : plural(tests.length, 'test file')}`,
-        detail: tests.slice(0, SAMPLE).join(', '),
-        before: tests.slice(0, SAMPLE),
-      })
-    } else if (editing && guarded.length > 0) {
-      const [first] = guarded
-      found.push({
-        rule: 'shell-edit',
-        file: first?.[0],
-        title: `edits ${basename(first?.[0] ?? '')} from the shell`,
-        detail: 'a guarded file changed where goalpost-guard cannot see the diff; use Edit so it can',
-        after: [command.slice(0, 200)],
-        category: first?.[1],
-      })
+  const deleted: string[] = []
+  const edited: Array<readonly [string, GoalpostCategory]> = []
+  for (const segment of segmentsOf(command)) {
+    const [verb = '', ...rest] = withoutPrefix(segment.words)
+    const args = rest.filter(word => !word.startsWith('-'))
+    const isDelete = ['rm', 'unlink', 'trash'].includes(verb) || (verb === 'git' && rest[0] === 'rm')
+    const isInPlace =
+      (['sed', 'gsed'].includes(verb) && rest.some(word => /^-[a-zA-Z]*i/.test(word) || word === '--in-place')) ||
+      (verb === 'perl' && rest.some(word => /^-[a-zA-Z]*i/.test(word)))
+    if (isDelete) {
+      deleted.push(...(verb === 'git' ? args.slice(1) : args).filter(word => isTestFile(word, options.testPattern) || SNAPSHOT_FILE.test(word)))
     }
+    const targets = [...(isInPlace ? args : []), ...segment.redirects]
+    for (const target of targets) {
+      const category = GUARDED_FOR_SHELL(target, options.testPattern)
+      if (category !== null) {
+        edited.push([target, category] as const)
+      }
+    }
+  }
+  if (deleted.length > 0) {
+    found.push({
+      rule: 'tests.removed',
+      file: deleted[0],
+      title: `deletes ${deleted.length === 1 ? 'a test file' : plural(deleted.length, 'test file')}`,
+      detail: deleted.slice(0, SAMPLE).join(', '),
+      before: deleted.slice(0, SAMPLE),
+    })
+  } else if (edited.length > 0) {
+    const [first] = edited
+    found.push({
+      rule: 'shell-edit',
+      file: first?.[0],
+      title: `edits ${basename(first?.[0] ?? '')} from the shell`,
+      detail: 'a guarded file changed where goalpost-guard cannot see the diff; use Edit so it can',
+      after: [command.slice(0, 200)],
+      category: first?.[1],
+    })
   }
 
   return found.filter(finding => options.categories.has(finding.category ?? CATEGORY_OF[finding.rule]))
