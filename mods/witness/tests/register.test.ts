@@ -597,3 +597,24 @@ describe('opening and pausing', () => {
     expect(await command($, 'live', 'pause')).toBe('witness lost track at /live.')
   })
 })
+
+describe('the beat after a call that ended early', () => {
+  test('a call that ends before its queued start is recorded does not leave the beat running', { plugins: [emcc, probe] }, async ($, on) => {
+    const it = session(on)
+    await prompt($, 'Fix it.')
+    const check = $.tool.call({ tool: 'Bash', command: 'npm test --slow', holdMs: 500 } as never)
+    await it.clock.settle()
+    await it.clock.advance(500)
+    const reading = $.tool.call({ tool: 'Read', file_path: '/repo/a.js' } as never)
+    await it.clock.settle()
+    await $.turn.complete({ answer: '', durationMs: 0, isAborted: false, turnId: 'turn-1', reason: 'answer' } as never)
+    await command($, 'emcc-answer')
+    await Promise.all([check, reading])
+    await it.clock.settle()
+    const before = (await state($, 'beat')) ?? false
+    await it.clock.advance(1000)
+    expect((await state($, 'beat')) ?? false).toBe(before)
+    await it.clock.advance(1000)
+    expect((await state($, 'beat')) ?? false).toBe(before)
+  })
+})

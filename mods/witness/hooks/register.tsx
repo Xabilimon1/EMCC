@@ -87,9 +87,10 @@ function serially<T>(work: () => Promise<T>): Promise<T> {
  */
 function queued($: EngineInterface, where: string, work: () => Promise<void>): void {
   serially(async () => {
-    // A dispatch's reads are pinned to one moment until it writes, and this
-    // step may run long after its hook began: writing first makes its reads
-    // see what the steps before it wrote.
+    // A dispatch's reads are pinned to one moment (documented), and in this
+    // engine a write refreshes them (observed, not documented; pinned by the
+    // test "a pause takes effect at once"). This step may run long after its
+    // hook began, so it writes first to see what the steps before it wrote.
     ticks += 1
     await $.state.set({ plugin: 'witness', key: 'queueTick' }, ticks)
     await work()
@@ -325,7 +326,7 @@ function resume($: EngineInterface): void {
 // ---------------------------------------------------------------- tool calls
 
 /** Before the call runs, in the queue: the waiting ends and the cursor is set first, before anything that can fail. */
-async function before($: EngineInterface, call: ToolCall, at: number): Promise<void> {
+async function before($: EngineInterface, call: ToolCall, at: number, live: { isRunning: boolean }): Promise<void> {
   if (await read($, isPaused)) {
     return
   }
@@ -340,7 +341,10 @@ async function before($: EngineInterface, call: ToolCall, at: number): Promise<v
     // The label shows the whole path.
   }
   await update($, now, () => ({ label: labelOf(call, cwd), since: at }))
-  startBeat($)
+  // Checked with nothing awaited before startBeat: a call that already ended must not restart the beat.
+  if (live.isRunning) {
+    startBeat($)
+  }
   if (!(await read($, hasOpened))) {
     await update($, hasOpened, () => true)
     await openPane($, false)
@@ -534,18 +538,29 @@ export const register: Register = on => {
     }
     const call = e as unknown as ToolCall
     inFlight += 1
+    const live = { isRunning: true }
     // Queued, never awaited: the call goes on at once, and the queue still runs this before the call's own after.
     const startedAt = timeNow($)
-    queued($, 'tool.call', async () => before($, call, await startedAt))
+    queued($, 'tool.call', async () => before($, call, await startedAt, live))
     let ran: Awaited<ReturnType<typeof next>>
     try {
       ran = await next(e)
     } catch (error) {
       // The call itself threw: its time was spent, nothing else is recorded, and the error goes on as it was.
-      after($, call, { deny: 'the call threw' })
+      live.isRunning = false
+      try {
+        after($, call, { deny: 'the call threw' })
+      } catch {
+        await lose($, 'tool.call')
+      }
       throw error
     }
-    after($, call, ran as unknown as Ran)
+    live.isRunning = false
+    try {
+      after($, call, ran as unknown as Ran)
+    } catch {
+      await lose($, 'tool.call')
+    }
 
     return ran
   })
