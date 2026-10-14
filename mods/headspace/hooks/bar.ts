@@ -1,7 +1,7 @@
 import type { HeadspaceKind, HeadspaceSegment } from '../types'
 
 export const COLOURS: Record<HeadspaceKind, string> = {
-  system: '#b0aea5', rules: '#d97757', conversation: '#6a9bcc', large: '#788c5d', free: '#e8e6dc', reserve: '#b0aea5',
+  system: '#b0aea5', rules: '#d97757', conversation: '#6a9bcc', large: '#788c5d', free: '#b0aea5', reserve: '#b0aea5',
 }
 export const ORDER: HeadspaceKind[] = ['system', 'rules', 'conversation', 'large', 'free', 'reserve']
 

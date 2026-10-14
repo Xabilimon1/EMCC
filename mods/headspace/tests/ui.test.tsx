@@ -13,7 +13,6 @@ const STONE = '#b0aea5'
 const CLAY = '#d97757'
 const SKY = '#6a9bcc'
 const OLIVE = '#788c5d'
-const LIGHT = '#e8e6dc'
 
 const ROWS: Row[] = [
   { name: 'System prompt', tokens: 3000, kind: 'used' },
@@ -232,13 +231,14 @@ describe('the band', () => {
     await filled($, it)
     for (const surface of SURFACES) {
       const ui = await band($, surface)
-      const cells = (await ui.findAll({ type: 'Text', text: /^[█░]+$/ })).map(one => [one.text[0], one.props.color, one.props.dimColor === true])
+      const cells = (await ui.findAll({ type: 'Text', text: /^[█░▁]+$/ })).map(one => [one.text[0], one.props.color, one.props.dimColor === true])
       expect(cells).toEqual([
         ['█', STONE, false],
         ['█', CLAY, false],
         ['█', SKY, false],
         ['█', OLIVE, false],
-        ['█', LIGHT, true],
+        // free is an empty rail, so it never reads as one more grey block beside system
+        ['▁', STONE, true],
         ['░', STONE, false],
       ])
       expect((await ui.find({ key: 'label-percent' }))?.text).toBe('31%')
@@ -430,7 +430,7 @@ describe('the band', () => {
     expect(await bare.find({ key: 'label-marked' })).toBeUndefined()
     expect((await bare.find({ key: 'label-rules' }))?.text).toBe('r')
     expect((await bare.find({ key: 'label-percent' }))?.text).toBe('31%')
-    expect((await bare.findAll({ type: 'Text', text: /^[█░]+$/ })).length).toBe(6)
+    expect((await bare.findAll({ type: 'Text', text: /^[█░▁]+$/ })).length).toBe(6)
     // No room beside a bare bar for a card.
     expect(await bare.find({ key: 'card-rules' })).toBeUndefined()
     await bare.unmount()

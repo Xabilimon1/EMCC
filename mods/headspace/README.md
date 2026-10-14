@@ -16,7 +16,7 @@ One line above the prompt: a bar with one segment per kind, each as wide as its 
 | rules | memory files (CLAUDE.md, rules files, auto-memory) and your session rules | clay `#d97757` | yes |
 | conversation | messages, minus the large results | sky `#6a9bcc` | no, view only |
 | large | tool results of `threshold` tokens or more (default 2000) | olive `#788c5d` | yes |
-| free | free space | light `#e8e6dc`, dimmed | no |
+| free | free space | an empty rail `▁`, stone, dimmed | no |
 | reserve | the autocompact buffer | stone, drawn `░` | no |
 
 The figures are Claude Code's own estimate, the one `/context` shows; headspace makes no token-count calls. Tool schemas loaded on demand (`MCP tools (deferred)` and the like) are not in the window, so they are not in the bar. The bar refreshes when a turn ends and when the pane opens; a subagent's turn end does not count.

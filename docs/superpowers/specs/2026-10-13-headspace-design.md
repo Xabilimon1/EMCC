@@ -20,7 +20,7 @@ Always above the prompt, one line: one segment per kind, its width proportional 
 | rules | memory files (CLAUDE.md, rules files, auto-memory) and session rules | clay `#d97757` | yes |
 | conversation | messages, minus the large results | sky `#6a9bcc` | no, view only |
 | large | tool results of `threshold` tokens or more (default 2000) | olive `#788c5d` | yes |
-| free | free space | light `#e8e6dc`, dimmed | no |
+| free | free space | an empty rail `▁`, stone, dimmed | no |
 | reserve | the autocompact buffer | stone, drawn `░` | no |
 
 Categories of kind `deferred` (tool schemas loaded on demand, such as `MCP tools (deferred)`) are not in the window and are left out of the bar.

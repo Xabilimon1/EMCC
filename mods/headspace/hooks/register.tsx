@@ -769,7 +769,7 @@ function isKind(word: string): word is HeadspaceKind {
 
 /** Each kind lit under the pointer: a lighter shade of its colour. */
 const LIGHTER: Record<HeadspaceKind, string> = {
-  system: '#d1cfc6', rules: '#e9a58a', conversation: '#9cbde0', large: '#a5b78a', free: '#f4f3ee', reserve: '#d1cfc6',
+  system: '#d1cfc6', rules: '#e9a58a', conversation: '#9cbde0', large: '#a5b78a', free: '#d1cfc6', reserve: '#d1cfc6',
 }
 const STONE = COLOURS.system
 const CLAY = COLOURS.rules
@@ -924,9 +924,14 @@ function scopeOf(kind: HeadspaceKind): string {
   return `headspace-${kind}`
 }
 
+/** The cell a kind is drawn with: free is an empty rail, the reserve hatched, the rest solid blocks. */
+function glyph(kind: HeadspaceKind): string {
+  return kind === 'free' ? '▁' : kind === 'reserve' ? '░' : '█'
+}
+
 /** One segment of the bar: its cells, and the same cells as a button under the pointer. */
 function segment($: EngineInterface, { Box, Text, Button }: Els, kind: HeadspaceKind, width: number): RenderElement {
-  const run = (kind === 'reserve' ? '░' : '█').repeat(width)
+  const run = glyph(kind).repeat(width)
   const hover = { scope: scopeOf(kind), color: LIGHTER[kind] }
 
   return (
@@ -975,7 +980,7 @@ function tabs($: EngineInterface, { Box, Text, Button }: Els, shown: HeadspaceKi
         ) : (
           <Box key={`tab-box-${kind}`} gap={1}>
             <Text color={COLOURS[kind]} dimColor={kind === 'free' ? true : undefined}>
-              {kind === 'reserve' ? '░' : '█'}
+              {glyph(kind)}
             </Text>
             <Button key={`tab-${kind}`} plain label={kind} onPress={() => press($, 'ui.press', () => showKind($, kind))} />
           </Box>

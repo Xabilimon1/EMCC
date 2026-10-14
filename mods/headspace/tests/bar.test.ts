@@ -194,6 +194,6 @@ describe('formatTokens', () => {
 
 describe('COLOURS', () => {
   test('every kind has its colour', async () => {
-    expect(ORDER.map(kind => COLOURS[kind])).toEqual(['#b0aea5', '#d97757', '#6a9bcc', '#788c5d', '#e8e6dc', '#b0aea5'])
+    expect(ORDER.map(kind => COLOURS[kind])).toEqual(['#b0aea5', '#d97757', '#6a9bcc', '#788c5d', '#b0aea5', '#b0aea5'])
   })
 })
