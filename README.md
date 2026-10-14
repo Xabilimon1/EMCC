@@ -85,9 +85,10 @@ Inside Claude Code 2.1.287 or later:
 /plugin install witness@emcc
 /plugin install emcc-core@emcc
 /plugin install goalpost-guard@emcc
+/plugin install headspace@emcc
 ```
 
-witness needs emcc-core and installs it with itself; the others work on their own. Together they share one profile and one band. Run `/emcc` to see the profile and what EMCC has recorded so far, and `/goalposts` for what was held. If Claude Code warns about the prompt cache and leaves the plugin pending, run `/reload-plugins --force` or start a new session.
+witness needs emcc-core and installs it with itself; headspace installs its companion headspace-cut the same way; the others work on their own. Together they share one profile and one band. Run `/emcc` to see the profile and what EMCC has recorded so far, and `/goalposts` for what was held. If Claude Code warns about the prompt cache and leaves the plugin pending, run `/reload-plugins --force` or start a new session.
 
 <details>
 <summary><b>From your shell</b></summary>
@@ -97,6 +98,7 @@ claude plugin marketplace add Xabilimon1/emcc-claude-code-mods
 claude plugin install witness@emcc
 claude plugin install emcc-core@emcc
 claude plugin install goalpost-guard@emcc
+claude plugin install headspace@emcc
 ```
 
 The mods load the next time you start Claude Code. In a session that is already open, run `/reload-plugins`.
@@ -116,6 +118,7 @@ claude plugin install emcc-core@emcc --config profile=strict
 | <img src="docs/icons/ledger.svg" width="20" height="20" align="top" alt=""> | [`witness`](mods/witness) | A live pane of Claude's work: the goal, a ribbon of where the time went, what it is doing now, and each step marked proven, unproven, stale or flagged by goalpost-guard. Opens by itself on wide terminals; `/live`, `/goal`. | No network, no files, no processes, no model calls | 0.1.0 |
 | <img src="docs/icons/band.svg" width="20" height="20" align="top" alt=""> | [`emcc-core`](mods/emcc-core) | The base the others build on. Records test, build, lint and typecheck runs and edits; draws one band above the prompt with the latest result of each and the badges other mods post; sets the profile (`standard`, `strict`, `off`); `/emcc-halt` turns every gate off. | No network, no files, no processes | 0.2.0 |
 | <img src="docs/icons/goalpost.svg" width="20" height="20" align="top" alt=""> | [`goalpost-guard`](mods/goalpost-guard) | Holds any edit or command that lowers the bar: removed, skipped or loosened tests, rewritten expected values, tests pointed at a stand-in, new suppressions, relaxed lint and type config, softened CI, lowered coverage, skipped git hooks. Asks you, or with emcc-core reports it and flags it for witness (or denies); remembers exceptions per file or project; puts what was let through in the commit as a `Goalpost-Change` trailer; `/goalposts audit` checks a branch. | Reads the files a change touches; runs `git` only for `/goalposts audit`; no network | 0.2.0 |
+| | [`headspace`](mods/headspace) | What Claude carries, in colour: a bar above the prompt with system, rules, conversation and large tool results. Click a segment to open a pane where you turn CLAUDE.md and auto-memory rules off for the session, edit them, add session rules, save changes back to the file (with undo), and take large tool results out of the conversation without a summary. `/headspace`. Installs its companion [`headspace-cut`](mods/headspace-cut). | Reads and writes your instruction files (CLAUDE.md, rules files) only when you save or undo and confirm; no network, no processes, no model calls | 0.1.0 |
 
 ### Coming next
 
