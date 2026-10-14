@@ -332,7 +332,8 @@ describe('the pane’s command', () => {
   test('/headspace opens the pane on rules and refreshes the bar', WITH_PROBE, async ($, on) => {
     const it = session(on)
     it.categories = ROWS
-    expect(await command($, 'headspace')).toBe('')
+    // A row of its own: an empty answer reads `headspace:` with nothing after it.
+    expect(await command($, 'headspace')).toBe('opened on rules')
     expect(it.opened).toEqual([{ id: 'headspace', title: 'headspace', closeOnEscape: true, focus: true }])
     expect(await state($, 'selected')).toBe('rules')
     expect(it.usageCalls).toBe(1)
@@ -341,7 +342,7 @@ describe('the pane’s command', () => {
 
   test('/headspace large opens it on the large results', WITH_PROBE, async ($, on) => {
     const it = session(on)
-    await command($, 'headspace', 'large')
+    expect(await command($, 'headspace', 'large')).toBe('opened on large')
     expect(it.opened.length).toBe(1)
     expect(await state($, 'selected')).toBe('large')
   })

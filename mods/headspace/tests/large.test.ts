@@ -22,6 +22,35 @@ const read = (id: string, chars: number, file = '/repo/src/data.json'): ApiMessa
   result(id, 'x'.repeat(chars)),
 ]
 
+/** A `<system-reminder>` block of exactly `chars` characters, as the engine puts them before a first prompt. */
+const reminder = (chars: number): string => {
+  const open = '<system-reminder>\n'
+  const close = '\n</system-reminder>'
+
+  return open + 'r'.repeat(chars - open.length - close.length) + close
+}
+
+/**
+ * Shaped like a real session (Claude Code 2.1.287, Haiku): the first user message carries
+ * 60,638 characters of reminders (environment, skills, MCP instructions, CLAUDE.md, date)
+ * that the breakdown counts under other categories, then the prompt; a Read of 36,292
+ * characters; an answer. Everything but the reminders is 36,520 characters; Messages 4425.
+ */
+const REAL_MESSAGE_TOKENS = 4425
+const realShaped = (): ApiMessage[] => [
+  {
+    role: 'user',
+    content: [
+      { type: 'text', text: reminder(40_000) },
+      { type: 'text', text: reminder(20_638) },
+      { type: 'text', text: 'p'.repeat(100) },
+    ],
+  },
+  // 'Read' and {"file_path":"/repo/src/data.json"}: 4 + 35 characters.
+  ...read('r1', 36_292),
+  answer('a'.repeat(36_520 - 36_292 - 39 - 100)),
+]
+
 describe('largeResults', () => {
   test('a 40k-character Read is large with 10000 tokens when there is no Messages figure', async () => {
     const { results } = largeResults([prompt('read it'), ...read('r1', 40_000)], 2000, null, CWD)
@@ -52,6 +81,26 @@ describe('largeResults', () => {
     expect(tokens).toBeGreaterThan(3600)
     expect(tokens).toBeLessThan(3800)
     expect(share).toBe(tokens / 4052)
+  })
+
+  test('reminder blocks at the top of a user message are not Messages: a real-shaped Read is large', async () => {
+    const { results, share } = largeResults(realShaped(), 2000, REAL_MESSAGE_TOKENS, CWD)
+    expect(results.map(r => r.id)).toEqual(['r1'])
+    // 4425 * 36292 / 36520, not 4425 * 36292 / 97158 (1653, under the threshold).
+    expect(results[0]?.tokens).toBe(4397)
+    expect(share).toBe(4397 / 4425)
+  })
+
+  test('reminder text inside a tool result is part of the result', async () => {
+    const content = [
+      { type: 'text', text: 'x'.repeat(8000) },
+      { type: 'text', text: reminder(8000) },
+    ]
+    const messages = [prompt('p'.repeat(4000)), call('r1', 'Read', {}), result('r1', content)]
+    // Counted on both sides: 16,001 of 20,007 characters (Read and {} are 6), out of 2000 tokens.
+    const { results } = largeResults(messages, 1000, 2000, CWD)
+    expect(results[0]?.chars).toBe(16_001)
+    expect(results[0]?.tokens).toBe(Math.round((16_001 / 20_007) * 2000))
   })
 
   test('string content and text-block content are both measured', async () => {
@@ -170,6 +219,13 @@ describe('cacheCost', () => {
     const cost = cacheCost(messages, ['r1'], 1000)
     expect(cost).toBeGreaterThan(490)
     expect(cost).toBeLessThan(510)
+  })
+
+  test('reminder blocks at the top of a user message are left out of the cost, as of the share', async () => {
+    // A next prompt with its own reminder after the answer: 4 characters count, the reminder none.
+    const messages: ApiMessage[] = [...realShaped(), { role: 'user', content: [{ type: 'text', text: reminder(5000) }, { type: 'text', text: 'next' }] }]
+    // From the Read to the end: 36,292 + 89 + 4 of 36,524 characters, of 4425 tokens.
+    expect(cacheCost(messages, ['r1'], REAL_MESSAGE_TOKENS)).toBe(Math.round((36_385 / 36_524) * REAL_MESSAGE_TOKENS))
   })
 
   test('no marked result found costs nothing', async () => {

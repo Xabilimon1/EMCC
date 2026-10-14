@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { diffLines, isReflected, parseRules, renderRules } from '../hooks/rules'
+import { diffLines, isReflected, parseRules, renderRules, shortPath } from '../hooks/rules'
 
 const HEADINGS_AND_LISTS = [
   '# Git',
@@ -321,5 +321,33 @@ describe('isReflected', () => {
 
   test('a text without the rule tells nothing', () => {
     expect(isReflected(parseRules('- Other.\n'), parseRules(BEFORE), id('Two'), [{ type: 'off' }])).toBeNull()
+  })
+})
+
+describe('shortPath', () => {
+  test('a path under the session root is relative to it', () => {
+    expect(shortPath('/repo/CLAUDE.md', '/repo', '/home/me')).toBe('CLAUDE.md')
+    expect(shortPath('/repo/docs/rules.md', '/repo/', '/home/me')).toBe('docs/rules.md')
+  })
+
+  test('a path under the home directory starts with ~/', () => {
+    expect(shortPath('/home/me/.claude/CLAUDE.md', '/repo', '/home/me')).toBe('~/.claude/CLAUDE.md')
+    expect(shortPath('/home/me/.claude/CLAUDE.md', '/repo', '/home/me/')).toBe('~/.claude/CLAUDE.md')
+  })
+
+  test('the session root wins over the home directory it sits in', () => {
+    expect(shortPath('/home/me/proj/CLAUDE.md', '/home/me/proj', '/home/me')).toBe('CLAUDE.md')
+  })
+
+  test('a name that only begins like the root or the home directory is not under it', () => {
+    expect(shortPath('/repo2/CLAUDE.md', '/repo', '/home/me')).toBe('/repo2/CLAUDE.md')
+    expect(shortPath('/home/meow/CLAUDE.md', '/repo', '/home/me')).toBe('/home/meow/CLAUDE.md')
+  })
+
+  test('anything else, or without a root and a home, stays as it is', () => {
+    expect(shortPath('/etc/claude/CLAUDE.md', '/repo', '/home/me')).toBe('/etc/claude/CLAUDE.md')
+    expect(shortPath('/repo/CLAUDE.md', null, null)).toBe('/repo/CLAUDE.md')
+    // A root or home of / would make every path relative to nothing in particular.
+    expect(shortPath('/etc/claude/CLAUDE.md', '/', '/')).toBe('/etc/claude/CLAUDE.md')
   })
 })

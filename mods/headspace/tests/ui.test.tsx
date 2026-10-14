@@ -73,6 +73,12 @@ function engineBand(on: Parameters<typeof session>[0]): void {
   })
 }
 
+/** The session root and the home directory, as the engine answers them. */
+function paths(on: Parameters<typeof session>[0], root = '/repo', home = '/home/me'): void {
+  on('session.root', () => ({ value: root }) as never)
+  on('env.get', (_$, e) => ({ value: (e as unknown as { name: string }).name === 'HOME' ? home : undefined }) as never)
+}
+
 /** The context as the engine computes it: what tells headspace the files behind claudeMd. */
 function context($: Engine) {
   return $.prompt.context({ blocks: BLOCKS, instructionFiles: FILES } as never)
@@ -469,17 +475,46 @@ describe('the pane', () => {
 
   test('the rules: files, their rows, and the session rules', WITH_PROBE, async ($, on) => {
     const it = session(on)
+    paths(on)
     await filled($, it)
     await command($, 'headspace')
     for (const surface of SURFACES) {
       const ui = await pane($, surface)
-      expect((await ui.find({ type: 'Text', text: /^\/repo\/CLAUDE\.md/ }))?.text).toMatch(/^\/repo\/CLAUDE\.md {2}project {2}\d+$/)
+      expect((await ui.find({ type: 'Text', text: /^CLAUDE\.md/ }))?.text).toMatch(/^CLAUDE\.md {2}project {2}\d+$/)
       expect((await ui.find({ type: 'Button', text: /Never push straight to main/ }))?.props.plain).toBe(true)
       expect(await ui.find({ type: 'Text', text: /^session rules/ })).toBeDefined()
       expect((await ui.find({ key: 'apply-rules' }))?.text).toBe('apply')
       // From the first user message on: rules 4k, the conversation and large 10k. The tools and the
       // system prompt come before it and stay cached; free space and the reserve are not sent.
       expect((await ui.find({ type: 'Text', text: /of cache$/ }))?.text).toBe('rewrites ~14k of cache')
+      await ui.unmount()
+    }
+  })
+
+  test('file paths: relative under the session root, ~/ under home, absolute elsewhere, cut from the left', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    paths(on)
+    it.categories = ROWS
+    const files = [
+      { path: MANAGED, kind: 'managed', content: MANAGED_TEXT },
+      { path: '/home/me/.claude/CLAUDE.md', kind: 'user', content: '- Be brief.\n' },
+      { path: PROJECT, kind: 'project', content: PROJECT_TEXT },
+      { path: '/repo/docs/rules.md', kind: 'project', content: '- Test first.\n' },
+    ]
+    const text = files.map(f => `Contents of ${f.path}:\n\n${f.content}`).join('\n\n')
+    await $.prompt.context({ blocks: [{ name: 'claudeMd', text }], instructionFiles: files } as never)
+    await endTurn($)
+    await command($, 'headspace')
+    for (const surface of SURFACES) {
+      const ui = await pane($, surface)
+      expect((await ui.find({ type: 'Text', text: /^~\/\.claude\/CLAUDE\.md/ }))?.text).toMatch(/^~\/\.claude\/CLAUDE\.md {2}user {2}\d+$/)
+      expect((await ui.find({ type: 'Text', text: /^CLAUDE\.md/ }))?.text).toMatch(/^CLAUDE\.md {2}project {2}\d+$/)
+      const rules = await ui.find({ type: 'Text', text: /^docs\/rules\.md/ })
+      expect(rules?.text).toMatch(/^docs\/rules\.md {2}project {2}\d+$/)
+      // Still too long for the pane, the start goes first: the name and the figures stay.
+      expect(rules?.props.wrap).toBe('truncate-start')
+      expect((await ui.find({ type: 'Text', text: /^\/etc\/claude\/CLAUDE\.md/ }))?.text).toMatch(/^\/etc\/claude\/CLAUDE\.md {2}managed/)
+      expect(await ui.find({ type: 'Text', text: /\/home\/me|\/repo\// })).toBeUndefined()
       await ui.unmount()
     }
   })

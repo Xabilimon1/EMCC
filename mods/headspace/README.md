@@ -37,7 +37,7 @@ The pane has the six kinds as tabs across the top, in their colours, and the sel
 
 ## Rules
 
-The rules tab lists the files behind your CLAUDE.md context in the order Claude reads them (your user CLAUDE.md, the project's, rules files, `@` imports), then auto-memory, then your session rules:
+The rules tab lists the files behind your CLAUDE.md context in the order Claude reads them (your user CLAUDE.md, the project's, rules files, `@` imports), then auto-memory, then your session rules. A file under the project shows relative to it (`CLAUDE.md`, `docs/rules.md`), one under your home directory as `~/…`, and a path still too long for the pane loses its start:
 
 ```
 rules  9.2k
@@ -72,7 +72,7 @@ A file splits into rules: each top-level list item with its continuation lines, 
 
 ## Large results
 
-The large tab lists every tool result in what Claude currently reads that is `threshold` tokens or more, biggest first: the tool, its target in short (the file, the command, the URL), its size, and how many of your prompts came after it.
+The large tab lists every tool result in what Claude currently reads that is `threshold` tokens or more, biggest first. A result's tokens are its share of the conversation's figure, in proportion to characters; the `<system-reminder>` blocks Claude Code puts at the top of a prompt (the environment, the skills, CLAUDE.md) are counted under other kinds, so they are left out of that share, while one inside a tool result is part of the result. Each row shows the tool, its target in short (the file, the command, the URL), its size, and how many of your prompts came after it.
 
 ```
 large  16.4k
@@ -140,7 +140,7 @@ claude --plugin-dir mods/headspace --plugin-dir mods/headspace-cut
 
 ## Commands
 
-- `/headspace` opens the pane on rules. `/headspace <kind>` opens it on `rules`, `large`, `system`, `conversation`, `free` or `reserve`.
+- `/headspace` opens the pane on rules and answers `opened on rules`. `/headspace <kind>` opens it on `rules`, `large`, `system`, `conversation`, `free` or `reserve`.
 - `/headspace apply` applies the rule changes waiting, as the pane's apply does.
 - `/headspace cut` removes the marked large results, as the pane's apply does, without asking first.
 
@@ -165,4 +165,4 @@ Set them in `/config`, or at install with `--config key=value`.
 claude plugin test mods/headspace
 ```
 
-181 tests: the bar's kinds, widths and narrow fallbacks (24), rules parsed and rendered back byte for byte, and changes already in a file (43), auto-memory entries (12), large results, their cost and the removal instructions (17), the hooks, apply, removal, save and undo in a simulated session (60), and the band and the pane on both terminal and desktop (25). Each one was seen failing before it passed.
+190 tests: the bar's kinds, widths and narrow fallbacks (24), rules parsed and rendered back byte for byte, changes already in a file, and short file paths (48), auto-memory entries (12), large results, their cost and the removal instructions (20), the hooks, apply, removal, save and undo in a simulated session (60), and the band and the pane on both terminal and desktop (26). Each one was seen failing before it passed.

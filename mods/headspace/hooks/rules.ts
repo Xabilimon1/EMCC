@@ -260,3 +260,28 @@ export function isReflected(before: ParsedFile, after: ParsedFile, id: string, l
   const changed = renderRules(alone, { [id]: [...list] }).text.split('\n')
   return after.rules.some(r => sameLines(r.lines, changed))
 }
+
+/** `path` beneath `dir`: what follows `dir/`, or null. A dir of `/` holds nothing in particular. */
+function beneath(path: string, dir: string | null): string | null {
+  const base = dir === null ? '' : dir.replace(/\/+$/, '')
+  if (base === '') {
+    return null
+  }
+
+  return path.startsWith(base + '/') ? path.slice(base.length + 1) : null
+}
+
+/**
+ * A file's path as the pane shows it: relative under the session `root`
+ * (`CLAUDE.md`, `docs/rules.md`), `~/…` under the `home` directory, as it is
+ * anywhere else. The root wins when it sits inside the home directory.
+ */
+export function shortPath(path: string, root: string | null, home: string | null): string {
+  const inRoot = beneath(path, root)
+  if (inRoot !== null) {
+    return inRoot
+  }
+  const inHome = beneath(path, home)
+
+  return inHome === null ? path : `~/${inHome}`
+}

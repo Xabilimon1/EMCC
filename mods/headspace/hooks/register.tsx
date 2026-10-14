@@ -17,7 +17,7 @@ import type { Category } from './bar'
 import { cacheCost, cutInstructions, label, largeResults } from './large'
 import type { LargeResult } from './large'
 import { memoryEntries, renderMemory } from './memory'
-import { diffLines, hash, isReflected, parseRules, renderRules } from './rules'
+import { diffLines, hash, isReflected, parseRules, renderRules, shortPath } from './rules'
 
 const COMMAND = 'headspace'
 const PANE = 'headspace'
@@ -835,10 +835,18 @@ function categoriesOf(kind: HeadspaceKind): Category[] {
 /** One file's rows for the pane: a file behind claudeMd, or the auto-memory index. */
 type RuleGroup = { source: string; title: string; isManaged: boolean; isMemory: boolean; rules: { id: string; lines: string[]; first: string }[] }
 
-function ruleGroups(): RuleGroup[] {
+/** The session root and the home directory, for short paths; null where the engine does not say. */
+async function pathBases($: EngineInterface): Promise<{ root: string | null; home: string | null }> {
+  const root = await $.session.root().catch(() => null)
+  const home = (await $.env.get('HOME').catch(() => undefined)) ?? null
+
+  return { root, home }
+}
+
+function ruleGroups(bases: { root: string | null; home: string | null } = { root: null, home: null }): RuleGroup[] {
   const groups: RuleGroup[] = lastFiles.map(file => ({
     source: file.path,
-    title: `${file.path}  ${file.kind}  ${formatTokens(estimate(file.content))}`,
+    title: `${shortPath(file.path, bases.root, bases.home)}  ${file.kind}  ${formatTokens(estimate(file.content))}`,
     isManaged: file.kind === 'managed',
     isMemory: false,
     rules: parseRules(file.content).rules.map(rule => ({ id: rule.id, lines: rule.lines, first: rule.lines[0] ?? '' })),
@@ -993,7 +1001,7 @@ async function rulesBody($: EngineInterface, { Box, Text, Button }: Els, Input: 
   const inForce = await read($, applied)
   const shot = await read($, snapshot)
   const rules = (await read($, pendingSessionRules)) ?? (await read($, sessionRules))
-  const groups = ruleGroups()
+  const groups = ruleGroups(await pathBases($))
   const waitingCount = waiting.reduce((sum, f) => sum + Object.keys(f.changes).length, 0) + ((await read($, pendingSessionRules)) === null ? 0 : 1)
   // What a changed context costs: everything from the first user message on, where claudeMd and the
   // session rules sit. The tools and the system prompt come before it and stay cached, save when an
@@ -1380,7 +1388,8 @@ export const register: Register = (on, options) => {
       }
       await openOn($, kind)
 
-      return { text: '' }
+      // The engine draws the answer as a row under headspace's name: an empty one reads `headspace:` alone.
+      return { text: `opened on ${kind}` }
     } catch {
       await lose($, `/headspace ${verb}`.trimEnd())
 

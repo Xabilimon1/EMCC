@@ -60,11 +60,27 @@ function blockChars(block: Block): number {
   }
 }
 
+/** A text block of a user message that is a `<system-reminder>`, not something typed. */
+function isReminder(block: Block): boolean {
+  return block.type === 'text' && typeof block.text === 'string' && block.text.trimStart().startsWith('<system-reminder>')
+}
+
+/**
+ * Characters a block of `message` adds to the breakdown's Messages figure. The
+ * `<system-reminder>` text blocks at the top of a user message (the environment,
+ * the skills, MCP instructions, CLAUDE.md, the date) count under other
+ * categories, so they count 0 here. Reminder text inside a tool_result is part
+ * of the result and counts.
+ */
+function messageChars(message: ApiMessage, block: Block): number {
+  return message.role === 'user' && isReminder(block) ? 0 : blockChars(block)
+}
+
 function totalChars(messages: readonly ApiMessage[]): number {
   let sum = 0
   for (const message of messages) {
     for (const block of message.content) {
-      sum += blockChars(block)
+      sum += messageChars(message, block)
     }
   }
 
@@ -89,7 +105,7 @@ function isPrompt(message: ApiMessage): boolean {
     return false
   }
 
-  return message.content.some(b => b.type === 'text' && typeof b.text === 'string' && b.text.trim() !== '' && !b.text.trimStart().startsWith('<system-reminder>'))
+  return message.content.some(b => b.type === 'text' && typeof b.text === 'string' && b.text.trim() !== '' && !isReminder(b))
 }
 
 function relative(path: string, cwd: string): string {
@@ -228,7 +244,7 @@ export function cacheCost(messages: readonly ApiMessage[], ids: readonly string[
         isCounting = true
       }
       if (isCounting) {
-        chars += blockChars(block)
+        chars += messageChars(message, block)
       }
     }
   }
