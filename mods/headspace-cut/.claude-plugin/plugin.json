@@ -1,0 +1,10 @@
+{
+  "name": "headspace-cut",
+  "version": "0.1.0",
+  "description": "headspace's companion: answers the compactions headspace starts, replacing the marked tool results with one line each and summarizing nothing.",
+  "author": { "name": "Xabilimon1", "url": "https://github.com/Xabilimon1" },
+  "repository": "https://github.com/Xabilimon1/emcc-claude-code-mods",
+  "license": "MIT",
+  "keywords": ["emcc", "context", "compaction"],
+  "types": "./types/index.d.ts"
+}
