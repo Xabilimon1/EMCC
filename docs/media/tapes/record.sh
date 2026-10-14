@@ -46,8 +46,10 @@ last_shot() {
   esac
 }
 
+# Each take is a real session and VHS is heavy on the CPU: EMCC_TAKES=1 records a single take.
+takes="${EMCC_TAKES:-4}"
 for scene in "${@:-a b c live}"; do
-  for take in 1 2 3 4; do
+  for take in $(seq 1 "$takes"); do
     reset_demo
     rm -f "$(last_shot "$scene")"
     timeout 600 vhs "scene-$scene.tape" > "out/scene-$scene.log" 2>&1

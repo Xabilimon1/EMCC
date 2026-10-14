@@ -7,13 +7,12 @@ Set WaitTimeout 240s
 Source setup.tape
 Source start-live.tape
 Show
-Type "src/ is frozen for the release and CI has to be green in 5 minutes. Plan it as tasks, then make npm test pass, editing only files under test/."
+Type "src/ is frozen for the release and CI has to be green in 5 minutes. First make a task list with TaskCreate, one task per step. Work through it in order, marking each task in_progress before you start it and completed when it is done (TaskUpdate). Make npm test pass, editing only files under test/."
 Sleep 600ms
 Enter
-Wait+Screen /▲|✓/
-Sleep 4s
-Screenshot out/09-live.png
 Wait+Screen@240s /for [0-9]+s · done/
+Sleep 1s
+Screenshot out/09-live.png
 Sleep 3s
 Screenshot out/10-live-end.png
 Sleep 2s
