@@ -261,6 +261,59 @@ export function isReflected(before: ParsedFile, after: ParsedFile, id: string, l
   return after.rules.some(r => sameLines(r.lines, changed))
 }
 
+/** What a context must say again about the rules in force: the first line of each rule turned off, and each edited line as it was and as it reads now. */
+export type ChangeNotes = { off: string[]; edits: { from: string; to: string }[] }
+
+/** A line without its indent and its list marker (`- `, `* `, `+ `, `1. `), as a note names it. */
+export const withoutMarker = (line: string) => line.trim().replace(/^(?:[-*+]|\d{1,9}[.)])(?:[ \t]+|$)/, '')
+
+/**
+ * The notes for a file's changes, in the file's order. Off wins over the rule's
+ * other changes; an edit that leaves the line as it was, an added line, and a
+ * rule the file no longer has name nothing.
+ */
+export function changeNotes(file: ParsedFile, changes: Record<string, HeadspaceRuleChange[]>): ChangeNotes {
+  const notes: ChangeNotes = { off: [], edits: [] }
+  for (const rule of file.rules) {
+    const list = changes[rule.id] ?? []
+    if (list.some(c => c.type === 'off')) {
+      notes.off.push(withoutMarker(rule.lines[0] ?? ''))
+      continue
+    }
+    for (const change of list) {
+      const was = change.type === 'edit' ? rule.lines[change.lineIndex] : undefined
+      if (change.type === 'edit' && was !== undefined && was.trim() !== change.text.trim()) {
+        notes.edits.push({ from: withoutMarker(was), to: withoutMarker(change.text) })
+      }
+    }
+  }
+  return notes
+}
+
+/**
+ * The blocks that say the notes again, after the context. The engine leaves the
+ * first message as it was, so the old rules are still read there; these blocks
+ * tell Claude which copy holds. None when nothing is off or edited.
+ */
+export function noticeBlocks(notes: ChangeNotes): { name: string; text: string }[] {
+  const blocks: { name: string; text: string }[] = []
+  if (notes.off.length > 0) {
+    blocks.push({
+      name: 'turnedOff',
+      text: 'The person turned these rules off for this session. Ignore them, even where they appear earlier in this conversation:\n' + notes.off.map(line => `- ${line}`).join('\n'),
+    })
+  }
+  if (notes.edits.length > 0) {
+    blocks.push({
+      name: 'changedRules',
+      text:
+        'The person changed these rules for this session; the new wording replaces the old one, even where the old one appears earlier:\n' +
+        notes.edits.map(e => `- was: ${e.from}\n  now: ${e.to}`).join('\n'),
+    })
+  }
+  return blocks
+}
+
 /** `path` beneath `dir`: what follows `dir/`, or null. A dir of `/` holds nothing in particular. */
 function beneath(path: string, dir: string | null): string | null {
   const base = dir === null ? '' : dir.replace(/\/+$/, '')

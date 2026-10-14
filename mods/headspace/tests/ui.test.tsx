@@ -484,9 +484,10 @@ describe('the pane', () => {
       expect((await ui.find({ type: 'Button', text: /Never push straight to main/ }))?.props.plain).toBe(true)
       expect(await ui.find({ type: 'Text', text: /^session rules/ })).toBeDefined()
       expect((await ui.find({ key: 'apply-rules' }))?.text).toBe('apply')
-      // From the first user message on: rules 4k, the conversation and large 10k. The tools and the
-      // system prompt come before it and stay cached; free space and the reserve are not sent.
-      expect((await ui.find({ type: 'Text', text: /of cache$/ }))?.text).toBe('rewrites ~14k of cache')
+      // The engine leaves the first message as it was and sends the context again in the next one:
+      // with nothing changed, that is the claudeMd block alone.
+      expect((await ui.find({ type: 'Text', text: /to the next message$/ }))?.text).toBe(`adds ~${Math.round(CLAUDE_MD.length / 4)} to the next message`)
+      expect(await ui.find({ type: 'Text', text: /until the next \/compact$/ })).toBeUndefined()
       await ui.unmount()
     }
   })
@@ -526,8 +527,26 @@ describe('the pane', () => {
     await seed($, 'pending', [{ source: 'memory', changes: { 'Kali#0#00000000': [{ type: 'off' }] } }])
     const ui = await pane($)
     // The memory index rides in the system prompt: system 15k on top of the 14k after it.
-    expect((await ui.find({ type: 'Text', text: /of cache$/ }))?.text).toBe('rewrites ~29k of cache')
+    expect((await ui.find({ type: 'Text', text: /^adds / }))?.text).toBe(`adds ~${Math.round(CLAUDE_MD.length / 4)} to the next message, rewrites ~29k of cache`)
     await ui.unmount()
+  })
+
+  test('apply’s cost is the context it sends again: claudeMd, the turnedOff block and the session rules', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    await filled($, it)
+    await command($, 'headspace')
+    await seed($, 'pending', [{ source: PROJECT, changes: { [ruleId('Never push')]: [{ type: 'off' }] } }])
+    await seed($, 'pendingSessionRules', ['Answer briefly'])
+    const turnedOff = 'The person turned these rules off for this session. Ignore them, even where they appear earlier in this conversation:\n- Never push straight to main.'
+    const rules = 'Session rules the person set for this session:\n- Answer briefly'
+    for (const surface of SURFACES) {
+      const ui = await pane($, surface)
+      const tokens = Math.round((CLAUDE_MD.length + turnedOff.length + rules.length) / 4)
+      expect((await ui.find({ type: 'Text', text: /^adds / }))?.text).toBe(`adds ~${tokens} to the next message`)
+      // Said once, under apply: the first message is left as it was.
+      expect((await ui.findAll({ type: 'Text', text: /until the next \/compact$/ })).map(t => t.text)).toEqual(['the original stays earlier in the conversation until the next /compact'])
+      await ui.unmount()
+    }
   })
 
   test('turning a rule off and pressing apply changes the next context', WITH_PROBE, async ($, on) => {

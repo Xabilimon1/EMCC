@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { diffLines, isReflected, parseRules, renderRules, shortPath } from '../hooks/rules'
+import { changeNotes, diffLines, isReflected, noticeBlocks, parseRules, renderRules, shortPath } from '../hooks/rules'
 
 const HEADINGS_AND_LISTS = [
   '# Git',
@@ -349,5 +349,55 @@ describe('shortPath', () => {
     expect(shortPath('/repo/CLAUDE.md', null, null)).toBe('/repo/CLAUDE.md')
     // A root or home of / would make every path relative to nothing in particular.
     expect(shortPath('/etc/claude/CLAUDE.md', '/', '/')).toBe('/etc/claude/CLAUDE.md')
+  })
+})
+
+describe('changeNotes', () => {
+  const file = parseRules(HEADINGS_AND_LISTS)
+  const id = (words: string) => file.rules.find(r => r.lines[0]?.includes(words))?.id ?? ''
+
+  test('a rule turned off is named by its first line, without its list marker; the rules left on are not named', () => {
+    const notes = changeNotes(file, { [id('Never push')]: [{ type: 'off' }], [id('Numbered')]: [{ type: 'off' }] })
+    expect(notes).toEqual({ off: ['Never push straight to main;', 'Numbered rules count too.'], edits: [] })
+  })
+
+  test('an edited line is named as it was and as it reads now', () => {
+    const notes = changeNotes(file, { [id('Never push')]: [{ type: 'edit', lineIndex: 1, text: '  open a merge request instead.' }] })
+    expect(notes).toEqual({ off: [], edits: [{ from: 'open a pull request instead.', to: 'open a merge request instead.' }] })
+  })
+
+  test('off wins over its rule’s edits; an edit to the same words, an added line and an unknown rule name nothing', () => {
+    const notes = changeNotes(file, {
+      [id('Commit')]: [{ type: 'edit', lineIndex: 0, text: '- Commit messages are short.' }, { type: 'off' }],
+      [id('No emoji')]: [{ type: 'edit', lineIndex: 0, text: '* No emoji.' }],
+      [id('English')]: [{ type: 'addLine', afterLineIndex: 0, text: '+ Spanish never.' }],
+      'gone#0#00000000': [{ type: 'off' }],
+    })
+    expect(notes).toEqual({ off: ['Commit messages follow Conventional Commits.'], edits: [] })
+  })
+})
+
+describe('noticeBlocks', () => {
+  test('nothing off and nothing edited: no block', () => {
+    expect(noticeBlocks({ off: [], edits: [] })).toEqual([])
+  })
+
+  test('rules turned off: a turnedOff block that tells Claude to ignore the copy earlier in the conversation', () => {
+    expect(noticeBlocks({ off: ['Always answer in French.', 'Two spaces.'], edits: [] })).toEqual([
+      {
+        name: 'turnedOff',
+        text: 'The person turned these rules off for this session. Ignore them, even where they appear earlier in this conversation:\n- Always answer in French.\n- Two spaces.',
+      },
+    ])
+  })
+
+  test('edited lines: a changedRules block, each line as it was and as it reads now, after turnedOff', () => {
+    expect(noticeBlocks({ off: ['Two spaces.'], edits: [{ from: 'Answer in French.', to: 'Answer in English.' }] })).toEqual([
+      { name: 'turnedOff', text: 'The person turned these rules off for this session. Ignore them, even where they appear earlier in this conversation:\n- Two spaces.' },
+      {
+        name: 'changedRules',
+        text: 'The person changed these rules for this session; the new wording replaces the old one, even where the old one appears earlier:\n- was: Answer in French.\n  now: Answer in English.',
+      },
+    ])
   })
 })

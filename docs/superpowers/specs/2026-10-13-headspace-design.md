@@ -57,7 +57,9 @@ rules  9.2k                            2 off
 
 Per rule: **on / off** (this session), **edit** a line (the engine's one-line `Input`), **add a line** below the selected one, **view** the whole rule.
 
-**Apply.** Changes pend until **apply**, which first shows what it costs: `rewrites ~148k of cache`. Rules live in the first user message, so changing them re-caches the whole conversation. They take effect from the next request, via `$.ui.invalidate('prompt.context')`. Off is never deletion: turn it back on and apply.
+**Apply.** Changes pend until **apply**, which first shows what it costs: `adds ~2.4k to the next message`. They take effect from the next request, via `$.ui.invalidate('prompt.context')`, which runs headspace's hook again. The engine does not rewrite the first user message: the context there stays as it was, the rule turned off included, and the context computed again arrives as a new system-reminder in the next user message (seen on 2026-10-14). The model reads both, so a rule that is only missing from the new copy is not reliably dropped: in one run Haiku followed the new set, in another the old rule. So while a rule or a memory entry is off, headspace adds a block of its own (`turnedOff`): "The person turned these rules off for this session. Ignore them, even where they appear earlier in this conversation:", then each rule's first line. An edited line gets a `changedRules` block, each line as it was and as it reads now. Both come in addition: the rules still leave `claudeMd`. Only `/compact` or `/clear` reads the context afresh and drops the old copy.
+
+The cost is what is sent again, not a rewrite: the `claudeMd` block, headspace's blocks and the session rules, at characters over four. Nothing earlier changes, so the cache before it holds. The pane says once, under apply, that the original stays earlier in the conversation until the next `/compact`. An auto-memory change costs more: the memory index is part of the system prompt, so everything after it is cached again, and the cost line adds that. Off is never deletion: turn it back on and apply.
 
 **Session rules** are typed into the field and go into the context as a block of headspace's own (`sessionRules`). The engine computes the context blocks again after a compaction or `/clear`, and headspace's hook adds the block again, so they survive `/compact`. Seen in the spike: a block telling Haiku to end every answer with a word was obeyed before and after `/compact`.
 
@@ -113,7 +115,7 @@ Pure functions, no `$`, each tested on its own:
 |---|---|
 | `session.start` | registers `/headspace` |
 | `turn.complete` | refreshes the bar (main loop only; a subagent's turn end is ignored) |
-| `prompt.context` | turns rules off, applies edits, adds the `sessionRules` block |
+| `prompt.context` | turns rules off, applies edits, adds the `turnedOff`, `changedRules` and `sessionRules` blocks |
 | `prompt.section` | on `memory`: the same for auto-memory |
 | `ui.render` | `AbovePrompt` (the bar with its hover cards) and `Pane` (`headspace`) |
 | `command.run` | `/headspace` opens the pane |
@@ -138,7 +140,7 @@ Every hook body is wrapped, and every failure falls to the safe side:
 All with `claude plugin test`, each seen failing before it passes, by breaking the code it checks.
 
 - **Pure:** a file rendered with no changes is identical byte for byte (several real CLAUDE.md shapes: headings, nested lists, code fences, `@` imports); off, edit, add line; widths and the one-cell minimum; the narrow fallbacks; the threshold; the stub line; the cache cost.
-- **Simulated session:** the bar draws the six colours; each segment carries its hover card; pressing a segment opens the pane on its kind; apply on rules changes the `claudeMd` block and adds `sessionRules`; apply on large sends the `headspace-cut:` instructions; `headspace-cut` returns the messages with the stub and no summary, skips on unreadable instructions, and passes any other compaction untouched; apply is dimmed while a turn runs and not offered without `headspace-cut`; `Managed` is read-only; save writes the file and the backup, undo restores it; save refuses a file changed on disk; a throwing hook leaves core's answer unchanged.
+- **Simulated session:** the bar draws the six colours; each segment carries its hover card; pressing a segment opens the pane on its kind; apply on rules changes the `claudeMd` block, names the rules turned off or edited, and adds `sessionRules`; apply on large sends the `headspace-cut:` instructions; `headspace-cut` returns the messages with the stub and no summary, skips on unreadable instructions, and passes any other compaction untouched; apply is dimmed while a turn runs and not offered without `headspace-cut`; `Managed` is read-only; save writes the file and the backup, undo restores it; save refuses a file changed on disk; a throwing hook leaves core's answer unchanged.
 
 ## What the spike settled
 
@@ -148,6 +150,7 @@ Three runs on 2026-10-13, Claude Code 2.1.287, Haiku 4.5, `--plugin-dir`, a thro
 2. Auto-memory rides in the `memory` system prompt section, not in `claudeMd`.
 3. A plugin's own context block is there again after `/compact`.
 4. The bar's colours and a band button draw as designed. Hover could not be checked: VHS has no pointer. It is checked by hand in Ghostty before the release.
+5. 2026-10-14, Claude Code 2.1.287, Haiku, the requests read from `$.session.messages({ as: 'api' })`: after Apply the engine does not rewrite the first user message. It keeps the original CLAUDE.md, the turned-off rule included, and the context computed again arrives as a new system-reminder in the next user message. Asked after turning off "Always answer in French", Haiku answered in English in one run and in French in another. Hence the `turnedOff` and `changedRules` blocks, and a rules cost that is the size of what is sent again, not a rewrite of the cache.
 
 Still open for the plan's first task: how to tell the live rows from those before the last compaction in `$.session.messages()`.
 

@@ -17,7 +17,8 @@ import type { Category } from './bar'
 import { cacheCost, cutInstructions, label, largeResults } from './large'
 import type { LargeResult } from './large'
 import { memoryEntries, renderMemory } from './memory'
-import { diffLines, hash, isReflected, parseRules, renderRules, shortPath } from './rules'
+import { changeNotes, diffLines, hash, isReflected, noticeBlocks, parseRules, renderRules, shortPath, withoutMarker } from './rules'
+import type { ChangeNotes } from './rules'
 
 const COMMAND = 'headspace'
 const PANE = 'headspace'
@@ -58,6 +59,8 @@ let lastApi: ApiMessage[] = []
 /** The instruction files and the memory section as the engine last gave them, for the pane's rows. */
 let lastFiles: readonly InstructionFile[] = []
 let lastMemory: string | null = null
+/** The claudeMd block's characters as the engine last built it: what an Apply sends again, with headspace's own blocks. */
+let lastClaudeMdChars = 0
 /** The breakdown's categories and its Messages figure at the last refresh, for the pane's read-only kinds and the cut's cost. */
 let lastCategories: Category[] = []
 let lastMessageTokens: number | null = null
@@ -367,6 +370,41 @@ async function settleSaved($: EngineInterface, files: readonly InstructionFile[]
 
   return left.flatMap(([, entry]) => entry.rules)
 }
+
+/** The session rules block's text. */
+function sessionRulesText(rules: readonly string[]): string {
+  return 'Session rules the person set for this session:\n' + rules.map(r => '- ' + r).join('\n')
+}
+
+/**
+ * The blocks that name again the rules `changes` turns off or edits: the files
+ * in the order the engine renders them, then the auto-memory entries. After an
+ * Apply the engine leaves the first message as it was, old rules included, and
+ * sends the context again in the next one: Claude reads both, and these blocks
+ * say which holds. A rule the files no longer have is not named.
+ */
+function noticesFor(files: readonly InstructionFile[] | undefined, memory: string | null, changes: readonly HeadspaceFileChanges[]): PromptContextBlock[] {
+  const notes: ChangeNotes = { off: [], edits: [] }
+  for (const file of files ?? []) {
+    const own = changes.find(f => f.source === file.path)
+    if (own !== undefined) {
+      const found = changeNotes(parseRules(file.content), own.changes)
+      notes.off.push(...found.off)
+      notes.edits.push(...found.edits)
+    }
+  }
+  const memoryChanges = changes.find(f => f.source === MEMORY)?.changes ?? {}
+  for (const entry of memory === null ? [] : memoryEntries(memory)) {
+    if ((memoryChanges[entry.id] ?? []).some(c => c.type === 'off')) {
+      notes.off.push(withoutMarker(entry.line))
+    }
+  }
+
+  return noticeBlocks(notes)
+}
+
+/** The names of headspace's own blocks, put after core's. */
+const OWN_BLOCKS = [SESSION_RULES, 'turnedOff', 'changedRules']
 
 // ---------------------------------------------------------------- save and undo
 
@@ -1008,11 +1046,12 @@ async function rulesBody($: EngineInterface, { Box, Text, Button }: Els, Input: 
   const rules = (await read($, pendingSessionRules)) ?? (await read($, sessionRules))
   const groups = ruleGroups(await pathBases($))
   const waitingCount = waiting.reduce((sum, f) => sum + Object.keys(f.changes).length, 0) + ((await read($, pendingSessionRules)) === null ? 0 : 1)
-  // What a changed context costs: everything from the first user message on, where claudeMd and the
-  // session rules sit. The tools and the system prompt come before it and stay cached, save when an
-  // auto-memory entry changes: the memory index is part of the system prompt.
-  const rewritten: HeadspaceKind[] = waiting.some(f => f.source === MEMORY) ? ['system', 'rules', 'conversation', 'large'] : ['rules', 'conversation', 'large']
-  const used = (shot?.segments ?? []).filter(s => rewritten.includes(s.kind)).reduce((sum, s) => sum + s.tokens, 0)
+  // What an Apply costs: the engine leaves the first message as it was and sends the context again
+  // in the next one, so the claudeMd block, headspace's notes and the session rules, at characters
+  // over four. An auto-memory change rewrites the system prompt, and everything after it is cached again.
+  const sent = lastClaudeMdChars + noticesFor(lastFiles, lastMemory, merged(inForce, waiting)).reduce((sum, b) => sum + b.text.length, 0) + (rules.length > 0 ? sessionRulesText(rules).length : 0)
+  const used = (shot?.segments ?? []).filter(s => s.kind !== 'free' && s.kind !== 'reserve').reduce((sum, s) => sum + s.tokens, 0)
+  const cost = `adds ~${formatTokens(Math.round(sent / 4))} to the next message` + (waiting.some(f => f.source === MEMORY) ? `, rewrites ~${formatTokens(used)} of cache` : '')
   /** Whether each group's file has a save to undo: only files headspace may write. */
   const undoable = await Promise.all(groups.map(async g => !g.isManaged && !g.isMemory && (await backupsOf($, g.source).catch(() => [])).length > 0))
   const sessionNotice = saveNotices.get(SESSION_RULES)
@@ -1114,9 +1153,10 @@ async function rulesBody($: EngineInterface, { Box, Text, Button }: Els, Input: 
       </Box>
       <Box gap={2}>
         <Button key="apply-rules" label="apply" variant="primary" onPress={() => press($, 'ui.press', () => applyRules($))} />
-        <Text color={STONE}>{`rewrites ~${formatTokens(used)} of cache`}</Text>
+        <Text color={STONE}>{cost}</Text>
         {waitingCount > 0 && <Text color={CLAY}>{count(waitingCount, 'change') + ' waiting'}</Text>}
       </Box>
+      {waitingCount > 0 && <Text color={STONE}>the original stays earlier in the conversation until the next /compact</Text>}
     </Box>
   )
 }
@@ -1310,15 +1350,17 @@ export const register: Register = (on, options) => {
   on('prompt.context', async ($, e, next) => {
     const core = await next(e)
     try {
+      lastClaudeMdChars = core.blocks.find(b => b.name === 'claudeMd')?.text.length ?? 0
       const previous = lastFiles
       if (e.instructionFiles !== undefined) {
         lastFiles = e.instructionFiles
       }
       const carried = await settleSaved($, e.instructionFiles)
-      const inForce = (await read($, applied)).filter(f => f.source !== MEMORY)
+      const all = await read($, applied)
+      const inForce = all.filter(f => f.source !== MEMORY)
       const own = await read($, sessionRules)
       const rules = [...own, ...carried.filter(rule => !own.includes(rule))]
-      if (inForce.length === 0 && rules.length === 0) {
+      if (all.length === 0 && rules.length === 0) {
         return core
       }
       let blocks: PromptContextBlock[] = [...core.blocks]
@@ -1334,10 +1376,9 @@ export const register: Register = (on, options) => {
           blocks = rewritten
         }
       }
-      if (rules.length > 0) {
-        const text = 'Session rules the person set for this session:\n' + rules.map(r => '- ' + r).join('\n')
-        blocks = [...blocks.filter(b => b.name !== SESSION_RULES), { name: SESSION_RULES, text }]
-      }
+      // Read after the rewrite, which drops the changes that no longer apply.
+      const notices = noticesFor(e.instructionFiles, lastMemory, await read($, applied))
+      blocks = [...blocks.filter(b => !OWN_BLOCKS.includes(b.name)), ...notices, ...(rules.length > 0 ? [{ name: SESSION_RULES, text: sessionRulesText(rules) }] : [])]
 
       return { ...core, blocks }
     } catch {

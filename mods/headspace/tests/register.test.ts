@@ -139,7 +139,7 @@ describe('the rules in the context', () => {
     await seed($, 'applied', [{ source: PROJECT, changes: { [ruleId('Never push')]: [{ type: 'off' }] } }])
     const r = await context($)
     const without = PROJECT_TEXT.replace('- Never push straight to main.\n', '')
-    expect(r.blocks).toEqual([{ name: 'claudeMd', text: CLAUDE_MD.replace(PROJECT_TEXT, without) }, BLOCKS[1]])
+    expect(r.blocks.slice(0, 2)).toEqual([{ name: 'claudeMd', text: CLAUDE_MD.replace(PROJECT_TEXT, without) }, BLOCKS[1]])
     // The user file holds the same words and is left alone.
     expect(r.blocks[0]?.text).toContain(`${USER_TEXT}`)
     expect((await state($, 'staleCount')) ?? 0).toBe(0)
@@ -261,6 +261,53 @@ describe('the rules in the context', () => {
     expect(r.blocks.slice(0, 2)).toEqual(BLOCKS)
     expect(r.blocks[2]?.name).toBe('sessionRules')
     expect(await state($, 'lostAt')).toBe('prompt.context (claudeMd rewritten above headspace)')
+  })
+})
+
+const OFF_HEAD = 'The person turned these rules off for this session. Ignore them, even where they appear earlier in this conversation:'
+const CHANGED_HEAD = 'The person changed these rules for this session; the new wording replaces the old one, even where the old one appears earlier:'
+
+describe('the rules turned off or changed, said again', () => {
+  // The engine leaves the first message as it was: the copy there still holds the old rules.
+  test('a rule turned off is named in a turnedOff block, after core’s blocks and before the session rules', WITH_PROBE, async ($, on) => {
+    session(on)
+    await seed($, 'applied', [{ source: PROJECT, changes: { [ruleId('Never push')]: [{ type: 'off' }] } }])
+    await seed($, 'sessionRules', ['Answer briefly'])
+    const r = await context($)
+    expect(r.blocks.map(b => b.name)).toEqual(['claudeMd', 'currentDate', 'turnedOff', 'sessionRules'])
+    expect(r.blocks[2]).toEqual({ name: 'turnedOff', text: `${OFF_HEAD}\n- Never push straight to main.` })
+  })
+
+  test('an edited line is named in a changedRules block; an added line alone adds no block', WITH_PROBE, async ($, on) => {
+    session(on)
+    const two = ruleId('Two spaces')
+    await seed($, 'applied', [{ source: PROJECT, changes: { [two]: [{ type: 'edit', lineIndex: 0, text: '- Four spaces.' }] } }])
+    const r = await context($)
+    expect(r.blocks.slice(2)).toEqual([{ name: 'changedRules', text: `${CHANGED_HEAD}\n- was: Two spaces.\n  now: Four spaces.` }])
+    await seed($, 'applied', [{ source: PROJECT, changes: { [two]: [{ type: 'addLine', afterLineIndex: 0, text: '- Tabs never.' }] } }])
+    expect((await context($)).blocks.map(b => b.name)).toEqual(['claudeMd', 'currentDate'])
+  })
+
+  test('an auto-memory entry turned off is named too', WITH_PROBE, async ($, on) => {
+    session(on)
+    const kali = memoryEntries(MEMORY_SECTION).find(m => m.title === 'Kali')?.id ?? ''
+    await seed($, 'applied', [{ source: 'memory', changes: { [kali]: [{ type: 'off' }] } }])
+    await $.prompt.section({ name: 'memory', text: MEMORY_SECTION } as never)
+    const r = await context($)
+    expect(r.blocks.slice(0, 2)).toEqual(BLOCKS)
+    expect(r.blocks[2]).toEqual({ name: 'turnedOff', text: `${OFF_HEAD}\n- [Kali](kali.md) — VM on the SSD` })
+  })
+
+  test('a change that no longer applies is not named, even while the file still holds the rule', WITH_PROBE, async ($, on) => {
+    session(on)
+    const gone = ruleId('Never push', PROJECT_TEXT.replace('straight', 'directly'))
+    await seed($, 'applied', [{ source: PROJECT, changes: { [gone]: [{ type: 'off' }] } }])
+    expect((await context($)).blocks).toEqual(BLOCKS)
+    // The block no longer frames the file's text: its changes are stale, though the file holds the rule.
+    await seed($, 'applied', [{ source: PROJECT, changes: { [ruleId('Never push')]: [{ type: 'off' }] } }])
+    const r = await $.prompt.context({ blocks: [{ name: 'claudeMd', text: 'something else' }], instructionFiles: FILES } as never)
+    expect(r.blocks).toEqual([{ name: 'claudeMd', text: 'something else' }])
+    expect(await state($, 'staleCount')).toBe(2)
   })
 })
 
@@ -696,7 +743,10 @@ describe('saving rules to the file', () => {
     // leaves applied, and the one that could not be saved stays in force for this session.
     const reread = CLAUDE_MD.replace(PROJECT_TEXT, WITHOUT_NEVER)
     const r = await $.prompt.context({ blocks: [{ name: 'claudeMd', text: reread }], instructionFiles: [FILES[0], { ...FILES[1], content: WITHOUT_NEVER }] } as never)
-    expect(r.blocks).toEqual([{ name: 'claudeMd', text: reread.replace('\n\n- Two spaces.\n', '\n') }])
+    expect(r.blocks).toEqual([
+      { name: 'claudeMd', text: reread.replace('\n\n- Two spaces.\n', '\n') },
+      { name: 'turnedOff', text: `${OFF_HEAD}\n- Two spaces.` },
+    ])
     expect(await state($, 'applied')).toEqual([{ source: PROJECT, changes: two }])
     expect((await state($, 'staleCount')) ?? 0).toBe(0)
     await ui.unmount()

@@ -48,7 +48,7 @@ save
 session rules  0.1k
 ● Keep the public API unchanged   remove  save
 [ add a session rule ]
-[ apply ]  rewrites ~148k of cache
+[ apply ]  adds ~2.4k to the next message
 ```
 
 A file splits into rules: each top-level list item with its continuation lines, or each paragraph. Select a rule to work on it:
@@ -57,7 +57,9 @@ A file splits into rules: each top-level list item with its continuation lines, 
 - **edit** the selected line, or **add line** below it.
 - Auto-memory entries (the index lines of your `MEMORY.md`) can only be turned off and on.
 
-**Apply.** Changes wait until you press **apply** (or run `/headspace apply`), and take effect from the next request. Next to the button is what applying costs: `rewrites ~148k of cache`. Your rules sit in the first message of the conversation, so changing them means Claude Code sends everything after them again without the prompt cache. Turning off an auto-memory entry costs more: that index is part of the system prompt, which is sent again too.
+**Apply.** Changes wait until you press **apply** (or run `/headspace apply`), and take effect from the next request. Claude Code does not rewrite the first message of the conversation, where it put your rules: that copy stays as it was, the rule you turned off included, and your rules as they now stand arrive inside your next message. Claude reads both, and a rule that is only missing from the new copy can still be followed from the old one. So while a rule is off, headspace's context says it in words: a block names each rule turned off, by its first line, and tells Claude to ignore it even where it appears earlier. An edited line gets the same: a block gives it as it was and as it reads now. The rule still leaves the new copy as well. Only `/compact` or `/clear` reads your rules afresh and drops the old copy for good.
+
+Next to the button is what applying costs: `adds ~2.4k to the next message`, the size of what is sent again (your CLAUDE.md block, headspace's blocks and the session rules, at four characters a token). Nothing earlier is sent again, so the cache before it holds. Once a change waits, a line under it says `the original stays earlier in the conversation until the next /compact`. Turning off an auto-memory entry costs more: that index is part of the system prompt, so everything after it is cached again, and the line adds `, rewrites ~148k of cache`.
 
 **Session rules** are typed into the field at the bottom. They go into the context as a block of headspace's own, and they are still there after `/compact`, because headspace adds the block again whenever Claude Code rebuilds the context. **remove** takes one out; like every change, it waits for apply.
 
@@ -154,7 +156,7 @@ Set them in `/config`, or at install with `--config key=value`.
 
 ## What it hooks and calls
 
-- Hooks: `session.start`, `turn.start`, `turn.complete`, `prompt.context` (rules turned off, edits, the session rules block), `prompt.section` (`memory`, auto-memory entries turned off), `command.run` (`headspace`), `ui.render` (`AbovePrompt`, the `headspace` pane)
+- Hooks: `session.start`, `turn.start`, `turn.complete`, `prompt.context` (rules turned off, edits, the blocks that name them, the session rules block), `prompt.section` (`memory`, auto-memory entries turned off), `command.run` (`headspace`), `ui.render` (`AbovePrompt`, the `headspace` pane)
 - Reads headspace-cut's state: `ready` and its heartbeat `seenAt`
 - Calls: `$.session.usage`, `$.session.messages`, `$.session.cwd`, `$.session.root`, `$.session.compact`, `$.state.get`, `$.state.set`, `$.store.get` and `$.store.set` (the save backups), `$.fs.read`, `$.fs.exists` and `$.fs.write` (only the file being saved or restored), `$.env.get` (`HOME`, `CLAUDE_CONFIG_DIR`, to find your CLAUDE.md), `$.ui.open`, `$.ui.ask`, `$.ui.toast`, `$.ui.invalidate`, `$.ui.resolve`, `$.clock.now`, `$.clock.after`, `$.command.register`
 - Kept after the session: only the save backups. No network, no processes, no model calls.
@@ -165,4 +167,4 @@ Set them in `/config`, or at install with `--config key=value`.
 claude plugin test mods/headspace
 ```
 
-190 tests: the bar's kinds, widths and narrow fallbacks (24), rules parsed and rendered back byte for byte, changes already in a file, and short file paths (48), auto-memory entries (12), large results, their cost and the removal instructions (20), the hooks, apply, removal, save and undo in a simulated session (60), and the band and the pane on both terminal and desktop (26). Each one was seen failing before it passed.
+201 tests: the bar's kinds, widths and narrow fallbacks (24), rules parsed and rendered back byte for byte, changes already in a file, short file paths, and the blocks that name rules turned off or changed (54), auto-memory entries (12), large results, their cost and the removal instructions (20), the hooks, apply, the rules named again, removal, save and undo in a simulated session (64), and the band and the pane on both terminal and desktop (27). Each one was seen failing before it passed.
