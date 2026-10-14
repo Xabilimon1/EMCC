@@ -337,6 +337,23 @@ describe('the band', () => {
     await ui.unmount()
   })
 
+  test('a press on a terminal too narrow for the pane says to widen it, and so does /headspace', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    quietBand(on)
+    await filled($, it)
+    it.isWide = false
+    const ui = await band($)
+    await ui.press({ key: 'open-rules' })
+    await it.clock.settle()
+    expect(it.toasts.at(-1)).toBe('headspace: widen the terminal to see the pane (the terminal is 80 columns; a pane the person opened needs 110)')
+    expect(await command($, 'headspace', 'large')).toBe('opened on large; widen the terminal to see it')
+    it.isWide = true
+    const before = it.toasts.length
+    expect(await command($, 'headspace', 'rules')).toBe('opened on rules')
+    expect(it.toasts.length).toBe(before)
+    await ui.unmount()
+  })
+
   test('each kind that holds anything has a Button shown at rest in every width, the keyboard’s way into the pane on it', WITH_PROBE, async ($, on) => {
     const it = session(on)
     quietBand(on)

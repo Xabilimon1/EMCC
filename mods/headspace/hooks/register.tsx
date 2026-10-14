@@ -792,11 +792,21 @@ async function typedCut($: EngineInterface): Promise<void> {
 
 // ---------------------------------------------------------------- the pane
 
-async function openOn($: EngineInterface, kind: HeadspaceKind): Promise<void> {
+/**
+ * Opens the pane on `kind`. On a terminal too narrow to seat it the engine
+ * opens it undrawn (it shows once the terminal widens), which looks like a
+ * press that did nothing: so headspace says why. Resolves whether it is on screen.
+ */
+async function openOn($: EngineInterface, kind: HeadspaceKind): Promise<boolean> {
   await update($, selected, () => kind)
   await update($, cursor, () => null)
-  await $.ui.open({ id: PANE, title: 'headspace', closeOnEscape: true, focus: true })
+  const opened = await $.ui.open({ id: PANE, title: 'headspace', closeOnEscape: true, focus: true })
+  if (!opened.isPlaced) {
+    $.ui.toast(`headspace: widen the terminal to see the pane (${opened.reason})`)
+  }
   await refresh($)
+
+  return opened.isPlaced
 }
 
 function isKind(word: string): word is HeadspaceKind {
@@ -1432,10 +1442,10 @@ export const register: Register = (on, options) => {
       if (!isKind(kind)) {
         return { text: 'headspace: /headspace [rules|large|system|conversation|free|reserve|apply|cut]' }
       }
-      await openOn($, kind)
+      const isShown = await openOn($, kind)
 
       // The engine draws the answer as a row under headspace's name: an empty one reads `headspace:` alone.
-      return { text: `opened on ${kind}` }
+      return { text: isShown ? `opened on ${kind}` : `opened on ${kind}; widen the terminal to see it` }
     } catch {
       await lose($, `/headspace ${verb}`.trimEnd())
 

@@ -33,7 +33,7 @@ With emcc-core or witness installed, their band is drawn under headspace's line,
 - **Click** a segment, or a label, to open the pane on that kind. From the keyboard: `ctrl+x tab` moves into the band's labels, and Enter opens the one in focus. Every kind that holds anything has its label at every width, so the keyboard reaches each one. The percentage opens the pane on rules.
 - `/headspace` opens the pane on rules; `/headspace large` (or any other kind) on that kind.
 
-The pane has the six kinds as tabs across the top, in their colours, and the selected kind's pieces below. Esc closes it. headspace never opens the pane on its own.
+The pane has the six kinds as tabs across the top, in their colours, and the selected kind's pieces below. Esc closes it. headspace never opens the pane on its own. Claude Code seats a side pane only from about 110 columns: on a narrower terminal the pane opens but waits, and shows once the terminal is wider. headspace says so with a toast (`headspace: widen the terminal to see the pane`), and `/headspace` answers `opened on rules; widen the terminal to see it`.
 
 ## Rules
 
@@ -167,4 +167,4 @@ Set them in `/config`, or at install with `--config key=value`.
 claude plugin test mods/headspace
 ```
 
-201 tests: the bar's kinds, widths and narrow fallbacks (24), rules parsed and rendered back byte for byte, changes already in a file, short file paths, and the blocks that name rules turned off or changed (54), auto-memory entries (12), large results, their cost and the removal instructions (20), the hooks, apply, the rules named again, removal, save and undo in a simulated session (64), and the band and the pane on both terminal and desktop (27). Each one was seen failing before it passed.
+202 tests: the bar's kinds, widths and narrow fallbacks (24), rules parsed and rendered back byte for byte, changes already in a file, short file paths, and the blocks that name rules turned off or changed (54), auto-memory entries (12), large results, their cost and the removal instructions (20), the hooks, apply, the rules named again, removal, save and undo in a simulated session (64), and the band and the pane on both terminal and desktop, a terminal too narrow for the pane included (28). Each one was seen failing before it passed.

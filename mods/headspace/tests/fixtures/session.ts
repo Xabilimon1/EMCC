@@ -22,6 +22,8 @@ export type Session = {
   compactions: (string | undefined)[]
   opened: { id: string; title?: string; focus?: boolean; closeOnEscape?: boolean }[]
   toasts: string[]
+  /** False: a pane opened now waits undrawn, as on a terminal too narrow to seat it. */
+  isWide: boolean
   invalidated: string[]
   /** The commands registered, as given. */
   registered: unknown[]
@@ -54,6 +56,7 @@ export function session(on: On): Session {
     compactions: [],
     opened: [],
     toasts: [],
+    isWide: true,
     invalidated: [],
     registered: [],
   }
@@ -96,7 +99,7 @@ export function session(on: On): Session {
   on('ui.open', (_$, e) => {
     it.opened.push(e as unknown as Session['opened'][number])
 
-    return { value: { isPlaced: true } } as never
+    return { value: it.isWide ? { isPlaced: true } : { isPlaced: false, reason: 'the terminal is 80 columns; a pane the person opened needs 110' } } as never
   })
   on('ui.toast', (_$, e) => {
     it.toasts.push((e as unknown as { text: string }).text)
