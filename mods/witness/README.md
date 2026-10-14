@@ -74,4 +74,4 @@ witness needs [`emcc-core`](../emcc-core), which keeps the evidence it marks ste
 claude plugin test mods/witness
 ```
 
-114 tests: goal parsing (8), phases (14), marks (15), watching a session (45), and the pane, the band and the pulse on both terminal and desktop (32). Each one was seen failing before it passed.
+116 tests: goal parsing (8), phases (14), marks (15), watching a session (45), and the pane, the band and the pulse on both terminal and desktop (34). Each one was seen failing before it passed.

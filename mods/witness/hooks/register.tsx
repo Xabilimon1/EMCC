@@ -327,6 +327,9 @@ async function showPane($: EngineInterface, where: string): Promise<boolean> {
 
 type Look = { glyph: string; color?: string; note: string }
 
+/** The share of a row a note may take beside its step; a longer one goes on its own line under it. */
+const NOTE_SHARE = 0.4
+
 function editsText(count: number): string {
   return `proven before ${count} ${count === 1 ? 'edit' : 'edits'}`
 }
@@ -827,25 +830,37 @@ export const register: Register = on => {
             {marked.criteria.map(({ criterion, mark }, index) => {
               const look = criterionLook(mark, nowAt)
 
+              const hasTick = criterion.command === null && index < 9
+              const isBeside = look.note.length <= Math.floor(width * NOTE_SHARE)
+
               return (
-                <Box key={`criterion-${index}`} gap={1}>
-                  <Box width={2} flexShrink={0}>
-                    <Text color={look.color} bold>
-                      {look.glyph}
-                    </Text>
+                <Box key={`criterion-${index}`} flexDirection="column">
+                  <Box gap={1}>
+                    <Box width={2} flexShrink={0}>
+                      <Text color={look.color} bold>
+                        {look.glyph}
+                      </Text>
+                    </Box>
+                    <Box flexGrow={1} flexShrink={1}>
+                      <Text>{criterion.text}</Text>
+                    </Box>
+                    {hasTick ? (
+                      <Button
+                        key={`tick-${index + 1}`}
+                        hotkey={String(index + 1)}
+                        label={criterion.isTicked ? 'Undo' : 'Done'}
+                        onPress={() => tick($, index)}
+                      />
+                    ) : (
+                      isBeside && (
+                        <Box key={`criterion-note-${index}`} flexShrink={0}>
+                          <Text color={look.color ?? STONE}>{look.note}</Text>
+                        </Box>
+                      )
+                    )}
                   </Box>
-                  <Box flexGrow={1} flexShrink={1}>
-                    <Text>{criterion.text}</Text>
-                  </Box>
-                  {criterion.command === null && index < 9 ? (
-                    <Button
-                      key={`tick-${index + 1}`}
-                      hotkey={String(index + 1)}
-                      label={criterion.isTicked ? 'Undo' : 'Done'}
-                      onPress={() => tick($, index)}
-                    />
-                  ) : (
-                    <Box flexShrink={0}>
+                  {!hasTick && !isBeside && (
+                    <Box key={`criterion-note-below-${index}`} marginLeft={3}>
                       <Text color={look.color ?? STONE}>{look.note}</Text>
                     </Box>
                   )}
@@ -860,21 +875,36 @@ export const register: Register = on => {
             const look = stepLook(mark, nowAt)
             const isActive = mark.kind === 'pending' && mark.isActive
 
+            // A note wider than NOTE_SHARE of the row (a flag's text) goes under the step: beside it, a box that
+            // never shrinks would squeeze the step's subject into a column two letters wide.
+            const isBeside = look.note.length <= Math.floor(width * NOTE_SHARE)
+
             return (
-              <Box key={`step-${index}`} gap={1}>
-                <Box width={2} flexShrink={0}>
-                  <Text color={look.color} bold>
-                    {look.glyph}
-                  </Text>
+              <Box key={`step-${index}`} flexDirection="column">
+                <Box gap={1}>
+                  <Box width={2} flexShrink={0}>
+                    <Text color={look.color} bold>
+                      {look.glyph}
+                    </Text>
+                  </Box>
+                  <Box flexGrow={1} flexShrink={1}>
+                    <Text bold={isActive} color={mark.kind === 'pending' && !isActive ? STONE : undefined}>
+                      {step.subject}
+                    </Text>
+                  </Box>
+                  {look.note !== '' && isBeside && (
+                    <Box key={`note-${index}`} flexShrink={0}>
+                      <Text color={look.color ?? STONE}>
+                        {look.note}
+                      </Text>
+                    </Box>
+                  )}
                 </Box>
-                <Box flexGrow={1} flexShrink={1}>
-                  <Text bold={isActive} color={mark.kind === 'pending' && !isActive ? STONE : undefined}>
-                    {step.subject}
-                  </Text>
-                </Box>
-                {look.note !== '' && (
-                  <Box flexShrink={0}>
-                    <Text color={look.color ?? STONE}>{look.note}</Text>
+                {look.note !== '' && !isBeside && (
+                  <Box key={`note-below-${index}`} marginLeft={3}>
+                    <Text color={look.color ?? STONE}>
+                      {look.note}
+                    </Text>
                   </Box>
                 )}
               </Box>

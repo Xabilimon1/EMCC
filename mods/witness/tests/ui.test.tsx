@@ -67,6 +67,21 @@ async function fourSteps($: Engine, it: Session): Promise<void> {
 }
 
 describe('the pane', () => {
+  test('a note too long for the row goes on its own line under the step, so the step keeps its width', WITH_EMCC, async ($, on) => {
+    const it = session(on)
+    await fourSteps($, it)
+    for (const surface of SURFACES) {
+      const ui = await pane($, surface)
+      // 'changes the values in 1 assertion (let through and reported)' is longer than 40% of 60 columns.
+      expect((await ui.find({ key: 'note-below-2' }))?.text).toBe('changes the values in 1 assertion (let through and reported)')
+      expect(await ui.find({ key: 'note-2' })).toBeUndefined()
+      // A short note stays beside its step.
+      expect((await ui.find({ key: 'note-0' }))?.text).toMatch(/^npm test passed/)
+      expect(await ui.find({ key: 'note-below-0' })).toBeUndefined()
+      await ui.unmount()
+    }
+  })
+
   test('shows the goal, the ribbon, Now and each step with its mark, on both surfaces', WITH_EMCC, async ($, on) => {
     const it = session(on)
     await fourSteps($, it)
@@ -189,6 +204,17 @@ describe('the pane', () => {
     const ui = await pane($)
     expect((await ui.find({ type: 'Text', text: /^[✓▲]$/ }))?.text).toBe('▲')
     expect(await ui.find({ type: 'Text', text: /^skips 2 tests$/ })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('a criterion’s long flag goes on its own line under it', WITH_EMCC, async ($, on) => {
+    const it = session(on)
+    await command($, 'goal', 'fix the cart; done when `npm test` passes')
+    await command($, 'emcc-flag', 'changes the values in 1 assertion (let through and reported)')
+    await call($, it, { tool: 'Bash', command: 'npm test' })
+    const ui = await pane($)
+    expect((await ui.find({ key: 'criterion-note-below-0' }))?.text).toBe('changes the values in 1 assertion (let through and reported)')
+    expect(await ui.find({ key: 'criterion-note-0' })).toBeUndefined()
     await ui.unmount()
   })
 

@@ -37,7 +37,7 @@
       "name": "witness",
       "source": "./mods/witness",
       "description": "A live view of Claude's work: the goal, a ribbon of its time, what it is doing now, and each step marked proven, unproven, stale or flagged.",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "category": "development",
       "tags": [
         "emcc",
