@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
@@ -107,12 +107,28 @@ describe('answering a compaction', () => {
   })
 })
 
-describe('session start', () => {
-  test('writes ready, so headspace knows it is there, and the session starts', WITH_PROBE, async ($, on) => {
+describe('session start and the heartbeat', () => {
+  const state = async ($: Engine) => JSON.parse((await $.command.run({ command: 'headspace-cut-state', args: '' } as never)).text ?? '{}')
+
+  test('writes ready and seenAt, so headspace knows it is there, and the session starts', WITH_PROBE, async ($, on) => {
+    mock.clock(on, { now: 5000 })
     on('session.start', () => ({ cwd: '/repo' }) as never)
-    const state = async () => JSON.parse((await $.command.run({ command: 'headspace-cut-state', args: '' } as never)).text ?? '{}')
-    expect((await state()).ready).toBeNull()
+    expect(await state($)).toEqual({ ready: null, seenAt: null })
     expect(await $.session.start({ cwd: '/repo', surface: null, isInteractive: true } as never)).toEqual({ cwd: '/repo' })
-    expect((await state()).ready).toBe(true)
+    expect(await state($)).toEqual({ ready: true, seenAt: 5000 })
+  })
+
+  test('every main-loop turn end writes seenAt again; a subagent’s does not', WITH_PROBE, async ($, on) => {
+    const clock = mock.clock(on, { now: 0 })
+    on('turn.complete', () => ({ text: '' }) as never)
+    const ended = { answer: 'Done.', durationMs: 10, isAborted: false, turnId: 'turn-1', reason: 'answer' }
+    await clock.advance(7000)
+    expect(await $.turn.complete(ended as never)).toEqual({ text: '' })
+    expect((await state($)).seenAt).toBe(7000)
+    await clock.advance(1000)
+    await $.turn.complete({ ...ended, agentId: 'agent-1' } as never)
+    expect((await state($)).seenAt).toBe(7000)
+    await $.turn.complete(ended as never)
+    expect((await state($)).seenAt).toBe(8000)
   })
 })

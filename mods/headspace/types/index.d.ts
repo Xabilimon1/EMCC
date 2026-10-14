@@ -24,6 +24,14 @@ export type HeadspaceFileChanges = { source: string; changes: Record<string, Hea
 /** A large result the person marked: what headspace-cut needs to stub it. */
 export type HeadspaceMark = { id: string; label: string }
 
+/**
+ * What the saves of one file wrote this session: the rule ids whose changes
+ * went into it, the session rules added to it, and a hash (rules.ts `hash`)
+ * of the text the engine held for it when the save went through. While the
+ * engine hands that text, those changes and rules stay in force over it.
+ */
+export type HeadspaceSaved = { ids: string[]; rules: string[]; loaded: string }
+
 declare module 'claude-code' {
   interface PluginState {
     headspace: {
@@ -46,6 +54,8 @@ declare module 'claude-code' {
       isCutting: boolean
       /** The last event a hook failed at, shown in the pane. */
       lostAt: string | null
+      /** Per path saved this session: what its saves wrote, until the engine reads the saved file. */
+      savedFrom: Record<string, HeadspaceSaved>
     }
   }
 }

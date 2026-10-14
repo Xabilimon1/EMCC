@@ -234,3 +234,29 @@ export function diffLines(before: string, after: string): { type: 'same' | 'out'
   while (j < m) diff.push({ type: 'in', text: b[j++]! })
   return diff
 }
+
+const sameLines = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((line, i) => line === b[i])
+
+/**
+ * Whether a change the engine's text no longer has a rule for is in that text
+ * already: `before` is a text the rule `id` was in (what the engine handed
+ * earlier, or a save's backup), `after` the engine's text now. An edit or an
+ * added line is in it when a rule of `after` reads exactly as the change makes
+ * the rule. A rule turned off is in it when its lines are gone and nothing was
+ * written in its place: the rule now at its heading and position, if any, is
+ * one that came after it in `before`. A rule rewritten by hand is not.
+ * Null when `before` has no rule `id`: nothing to tell by.
+ */
+export function isReflected(before: ParsedFile, after: ParsedFile, id: string, list: readonly HeadspaceRuleChange[]): boolean | null {
+  const rule = before.rules.find(r => r.id === id)
+  if (rule === undefined) return null
+  if (list.some(c => c.type === 'off')) {
+    if (after.rules.some(r => sameLines(r.lines, rule.lines))) return false
+    const later = before.rules.filter(r => r.heading === rule.heading && r.index > rule.index)
+    const now = after.rules.find(r => r.heading === rule.heading && r.index === rule.index)
+    return now === undefined || later.some(r => sameLines(r.lines, now.lines))
+  }
+  const alone: ParsedFile = { lines: rule.lines, rules: [{ ...rule, start: 0, end: rule.lines.length }], eol: '\n', finalNewline: false }
+  const changed = renderRules(alone, { [id]: [...list] }).text.split('\n')
+  return after.rules.some(r => sameLines(r.lines, changed))
+}

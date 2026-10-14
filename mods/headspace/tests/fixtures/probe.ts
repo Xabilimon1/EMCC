@@ -13,6 +13,8 @@ import type { Plugin } from 'claude-code/testing'
  *
  * `headspace-cut-ready on|off` says whether headspace-cut is installed, as
  * its `ready` value would (never written, as without the plugin, by default).
+ * While it is on, its heartbeat `seenAt` reads the clock's now, as a running
+ * headspace-cut's would, until `headspace-cut-seen <ms>` pins it there.
  * Every read is written out with literal `plugin` and `key`, as the scan requires.
  */
 export const probe: Plugin = {
@@ -21,6 +23,7 @@ export const probe: Plugin = {
   register(on) {
     const seeds = new Map<string, unknown>()
     let ready: boolean | undefined
+    let seenAt: number | undefined
 
     on('command.run', { command: 'headspace-state' }, async $ => {
       const all = {
@@ -35,6 +38,7 @@ export const probe: Plugin = {
         cursor: (await $.state.get({ plugin: 'headspace', key: 'cursor' })).value,
         isCutting: (await $.state.get({ plugin: 'headspace', key: 'isCutting' })).value,
         lostAt: (await $.state.get({ plugin: 'headspace', key: 'lostAt' })).value,
+        savedFrom: (await $.state.get({ plugin: 'headspace', key: 'savedFrom' })).value,
       }
 
       return { text: JSON.stringify(all) }
@@ -51,9 +55,22 @@ export const probe: Plugin = {
       return { text: String(ready) }
     })
 
+    on('command.run', { command: 'headspace-cut-seen' }, async (_$, e) => {
+      seenAt = Number(e.args.trim())
+
+      return { text: String(seenAt) }
+    })
+
     on('state.get', { plugin: 'headspace-cut', key: 'ready' }, async (_$, e, next) =>
       ready === undefined ? next(e) : ({ value: { value: ready, version: 1 } } as never),
     )
+    on('state.get', { plugin: 'headspace-cut', key: 'seenAt' }, async ($, e, next) => {
+      if (seenAt !== undefined) {
+        return { value: { value: seenAt, version: 1 } } as never
+      }
+
+      return ready === true ? ({ value: { value: await $.clock.now(), version: 1 } } as never) : next(e)
+    })
     for (const key of ['pending', 'applied', 'sessionRules', 'pendingSessionRules', 'marks', 'isCutting']) {
       on('state.get', { plugin: 'headspace', key } as never, async (_$, e, next) =>
         seeds.has(key) ? ({ value: { value: seeds.get(key), version: 1 } } as never) : next(e),

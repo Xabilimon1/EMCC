@@ -11,13 +11,13 @@ import type {
   RenderElement,
 } from 'claude-code'
 
-import type { HeadspaceFileChanges, HeadspaceKind, HeadspaceRuleChange, HeadspaceSnapshot } from '../types'
+import type { HeadspaceFileChanges, HeadspaceKind, HeadspaceRuleChange, HeadspaceSaved, HeadspaceSnapshot } from '../types'
 import { COLOURS, ORDER, fallback, formatTokens, toSegments, widths } from './bar'
 import type { Category } from './bar'
 import { cacheCost, cutInstructions, label, largeResults } from './large'
 import type { LargeResult } from './large'
 import { memoryEntries, renderMemory } from './memory'
-import { diffLines, parseRules, renderRules } from './rules'
+import { diffLines, hash, isReflected, parseRules, renderRules } from './rules'
 
 const COMMAND = 'headspace'
 const PANE = 'headspace'
@@ -39,11 +39,19 @@ const selected = atom({ plugin: 'headspace', key: 'selected' } as const, 'rules'
 const cursor = atom({ plugin: 'headspace', key: 'cursor' } as const, null)
 const isCutting = atom({ plugin: 'headspace', key: 'isCutting' } as const, false)
 const lostAt = atom({ plugin: 'headspace', key: 'lostAt' } as const, null)
+const savedFrom = atom({ plugin: 'headspace', key: 'savedFrom' } as const, {})
 
 /** The large results threshold, in tokens: the `threshold` userConfig field. */
 let threshold = DEFAULT_THRESHOLD
 /** Between `turn.start` and the main loop's `turn.complete`: a cut waits for the person's move. */
 let isTurnRunning = false
+/**
+ * When the main loop's last turn started (its end less its duration), null
+ * before one ended: headspace-cut's heartbeat must be no older, or it is no
+ * longer running. The start, not the end: both plugins hook that turn end,
+ * in either order.
+ */
+let turnStartedAt: number | null = null
 /** What the last refresh found, for the pane: the large results and the live conversation they came from. */
 let lastLarge: LargeResult[] = []
 let lastApi: ApiMessage[] = []
@@ -206,59 +214,158 @@ function countChanges(changes: Record<string, HeadspaceRuleChange[]>, ids: reado
   return ids.reduce((sum, id) => sum + (changes[id]?.length ?? 0), 0)
 }
 
+/** Where file `path`'s frame opens in the claudeMd text, from `from` on: `Contents of <path>` then ` (` or `:`; -1 when it is not there. */
+function frameAt(text: string, path: string, from: number): number {
+  const header = `Contents of ${path}`
+  for (let at = text.indexOf(header, from); at !== -1; at = text.indexOf(header, at + 1)) {
+    const after = text[at + header.length]
+    if (after === ' ' || after === ':') {
+      return at
+    }
+  }
+
+  return -1
+}
+
+/**
+ * Where each file's text sits in the claudeMd text: looked for inside its own
+ * frame, the files taken in the order the engine renders them, so a file that
+ * quotes another's text is never taken for it. The engine frames each file's
+ * text trimmed. A file whose frame or text is not found is left out.
+ */
+function framed(text: string, files: readonly InstructionFile[]): Map<string, { at: number; length: number }> {
+  const found = new Map<string, { at: number; length: number }>()
+  let from = 0
+  for (const file of files) {
+    const body = file.content.trim()
+    const header = frameAt(text, file.path, from)
+    if (body === '' || header === -1 || found.has(file.path)) {
+      continue
+    }
+    const at = text.indexOf(body, header)
+    const next = text.indexOf('\nContents of ', header + 1)
+    if (at === -1 || (next !== -1 && at > next)) {
+      continue
+    }
+    found.set(file.path, { at, length: body.length })
+    from = at + body.length
+  }
+
+  return found
+}
+
+/**
+ * The texts a file's rule ids may come from, newest first: what the engine
+ * handed for it before, and the backups headspace's saves kept.
+ */
+async function earlierTexts($: EngineInterface, path: string, previous: readonly InstructionFile[]): Promise<string[]> {
+  const handed = previous.find(f => f.path === path)?.content
+  const backups = await backupsOf($, path).catch(() => [] as Backup[])
+
+  return [...(handed === undefined ? [] : [handed]), ...backups.map(b => b.text).reverse()]
+}
+
+/** The ids among `unknown` whose change the file's text now holds already (rules.ts isReflected): they leave quietly. */
+async function reflectedIds($: EngineInterface, file: InstructionFile, changes: Record<string, HeadspaceRuleChange[]>, unknown: readonly string[], previous: readonly InstructionFile[]): Promise<string[]> {
+  if (unknown.length === 0) {
+    return []
+  }
+  const now = parseRules(file.content)
+  const earlier = (await earlierTexts($, file.path, previous)).map(text => parseRules(text))
+
+  return unknown.filter(id => {
+    for (const before of earlier) {
+      const reflected = isReflected(before, now, id, changes[id] ?? [])
+      if (reflected !== null) {
+        return reflected
+      }
+    }
+
+    return false
+  })
+}
+
 /**
  * The `claudeMd` block with the applied changes of each file it frames: the
- * file's loaded text replaced, once, by the text rendered without its rules
- * turned off. Changes whose rule is gone, or whose file text is not found in
- * the block, are dropped from applied and counted stale. Changes a save wrote
- * into the file leave quietly once the engine hands that file's new text.
+ * file's text, found in its own frame, replaced by the text rendered with the
+ * changes. Changes whose rule is gone, or whose file is not found in the
+ * block, are dropped from applied and counted stale, save the ones the file
+ * now holds already, which leave quietly. `previous` is what the engine handed
+ * before this read.
  */
-async function rewriteClaudeMd($: EngineInterface, block: PromptContextBlock, files: readonly InstructionFile[]): Promise<PromptContextBlock> {
+async function rewriteClaudeMd($: EngineInterface, block: PromptContextBlock, files: readonly InstructionFile[], previous: readonly InstructionFile[]): Promise<PromptContextBlock> {
   const inForce = (await read($, applied)).filter(f => f.source !== MEMORY)
-  let text = block.text
+  const where = framed(block.text, files)
+  const edits: { at: number; length: number; text: string }[] = []
   let stale = 0
   let isDropped = false
   const kept: HeadspaceFileChanges[] = []
-  for (const original of inForce) {
-    let entry = original
+  for (const entry of inForce) {
     const file = files.find(f => f.path === entry.source)
     if (file === undefined) {
       // Not loaded in this context (a nested file not read yet): kept for when it is.
       kept.push(entry)
       continue
     }
-    const saved = savedFrom.get(entry.source)
-    if (saved !== undefined && file.content !== saved.loaded) {
-      // The engine read the saved file: those changes are in its text now, never stale.
-      savedFrom.delete(entry.source)
-      entry = { source: entry.source, changes: Object.fromEntries(Object.entries(entry.changes).filter(([id]) => !saved.ids.includes(id))) }
-      isDropped = true
-      if (Object.keys(entry.changes).length === 0) {
-        continue
-      }
-    }
-    const { text: rendered, unknown } = renderRules(parseRules(file.content), entry.changes)
-    const at = text.indexOf(file.content)
-    if (at === -1) {
+    const span = where.get(file.path)
+    if (span === undefined) {
       stale += countChanges(entry.changes, Object.keys(entry.changes))
+      isDropped = true
       continue
     }
-    stale += countChanges(entry.changes, unknown)
-    text = text.slice(0, at) + rendered + text.slice(at + file.content.length)
+    const { text: rendered, unknown } = renderRules(parseRules(file.content), entry.changes)
+    const reflected = await reflectedIds($, file, entry.changes, unknown, previous)
+    stale += countChanges(entry.changes, unknown.filter(id => !reflected.includes(id)))
+    isDropped = isDropped || unknown.length > 0
+    edits.push({ ...span, text: rendered.trim() })
     const changes = Object.fromEntries(Object.entries(entry.changes).filter(([id]) => !unknown.includes(id)))
     if (Object.keys(changes).length > 0) {
       kept.push({ source: entry.source, changes })
     }
   }
-  if (stale > 0 || isDropped) {
+  if (isDropped) {
     const memory = (await read($, applied)).filter(f => f.source === MEMORY)
     await update($, applied, () => [...kept, ...memory])
   }
   if (stale > 0) {
     await update($, staleCount, count => count + stale)
   }
+  // From the last to the first, so each place found stays where it was.
+  let text = block.text
+  for (const edit of edits.sort((a, b) => b.at - a.at)) {
+    text = text.slice(0, edit.at) + edit.text + text.slice(edit.at + edit.length)
+  }
 
   return text === block.text ? block : { name: block.name, text }
+}
+
+/**
+ * Settles what saves wrote against the files the engine hands now: a file it
+ * hands with other text than when the save went through was read again, so
+ * the changes that save wrote are in its text and leave applied quietly, and
+ * the session rules it took are read from the file alone. Answers the session
+ * rules still carried in the block, for the files the engine has not read again.
+ */
+async function settleSaved($: EngineInterface, files: readonly InstructionFile[] | undefined): Promise<string[]> {
+  const saved = await read($, savedFrom)
+  const reread = Object.entries(saved).filter(([path, entry]) => {
+    const file = files?.find(f => f.path === path)
+
+    return file !== undefined && hash(file.content) !== entry.loaded
+  })
+  if (reread.length > 0) {
+    const gone = new Map(reread.map(([path, entry]) => [path, entry.ids]))
+    await update($, savedFrom, () => Object.fromEntries(Object.entries(saved).filter(([path]) => !gone.has(path))))
+    const list = await read($, applied)
+    await update($, applied, () =>
+      list
+        .map(f => (gone.has(f.source) ? { source: f.source, changes: Object.fromEntries(Object.entries(f.changes).filter(([id]) => !(gone.get(f.source) ?? []).includes(id))) } : f))
+        .filter(f => Object.keys(f.changes).length > 0),
+    )
+  }
+  const left = Object.entries(saved).filter(([path]) => !reread.some(([gone]) => gone === path))
+
+  return left.flatMap(([, entry]) => entry.rules)
 }
 
 // ---------------------------------------------------------------- save and undo
@@ -271,13 +378,22 @@ const DIFF_LINES = 30
 
 type Backup = { at: number; text: string }
 
+/** Marks a save of a file the engine has not read into this context: whatever text it hands next is the saved one. */
+const NOT_LOADED = ''
+
 /**
- * Per file saved this session: the text the engine held for it when the save
- * went through, and the rules that save wrote. The engine may go on handing
- * that text until it reads the file again (a compaction, /clear), so those
- * changes stay in force until its text differs, then leave applied quietly.
+ * Records what a save wrote into `path`, kept in `savedFrom` (session state,
+ * so a reload of headspace keeps it): the engine may go on handing the text it
+ * read before until it reads the file again (a compaction, /clear), so those
+ * changes stay in force and those session rules ride in the block until its
+ * text differs (settleSaved).
  */
-const savedFrom = new Map<string, { loaded: string; ids: string[] }>()
+async function recordSave($: EngineInterface, path: string, ids: readonly string[], rules: readonly string[]): Promise<void> {
+  const loaded = lastFiles.find(f => f.path === path)?.content
+  const all = await read($, savedFrom)
+  const own: HeadspaceSaved = all[path] ?? { ids: [], rules: [], loaded: loaded === undefined ? NOT_LOADED : hash(loaded) }
+  await update($, savedFrom, () => ({ ...all, [path]: { ids: [...new Set([...own.ids, ...ids])], rules: [...new Set([...own.rules, ...rules])], loaded: own.loaded } }))
+}
 
 /** The last save's outcome per source (a path, or SESSION_RULES), shown in the pane under its group. */
 const saveNotices = new Map<string, string>()
@@ -359,7 +475,7 @@ async function save($: EngineInterface, source: string): Promise<string> {
       return notify($, source, 'nothing applied to save')
     }
     // Changes an earlier save wrote are in the file already: only the others are saved now.
-    const written = savedFrom.get(source)?.ids ?? []
+    const written = (await read($, savedFrom))[source]?.ids ?? []
     const changes = Object.fromEntries(Object.entries(entry.changes).filter(([id]) => !written.includes(id)))
     const disk = await $.fs.read(source)
     const { text, unknown } = renderRules(parseRules(disk), changes)
@@ -386,7 +502,7 @@ async function save($: EngineInterface, source: string): Promise<string> {
       )
     } else {
       // Until the engine reads the file again it hands the old text: the saved changes stay in force over it.
-      savedFrom.set(source, { loaded, ids: [...written, ...saved] })
+      await recordSave($, source, saved, [])
     }
     $.ui.invalidate('prompt.context')
 
@@ -398,9 +514,10 @@ async function save($: EngineInterface, source: string): Promise<string> {
 
 /**
  * Puts back the file as it was before its last save, after showing the diff
- * and asking. Written as a save is: refused when the file changed while the
- * question was open, and what it writes over kept first as the newest backup.
- * The backup it restored is used up only once the write went through.
+ * and asking. Refused when the file changed while the question was open; the
+ * text it writes over is kept for that check alone, never as a save, so a
+ * second undo goes one save further back instead of redoing the first. The
+ * backup it restored is used up only once the write went through.
  */
 async function undoSave($: EngineInterface, source: string): Promise<string> {
   try {
@@ -412,15 +529,24 @@ async function undoSave($: EngineInterface, source: string): Promise<string> {
     if (!(await confirm($, `${diffText(current, last.text)}\n\nRestore ${source} to how it was before the last save?`, 'Restore'))) {
       return notify($, source, 'nothing written')
     }
-    const refusal = await writeKeepingBackup($, source, current, last.text)
-    if (refusal !== null) {
-      return notify($, source, refusal)
+    if ((await readOrEmpty($, source)) !== current) {
+      return notify($, source, 'changed on disk, nothing written')
     }
-    // The restored backup sits just under the one this write kept.
-    const saves = await backupsOf($, source)
-    await $.store.set(backupKey(source), { saves: saves.filter((_, at) => at !== saves.length - 2) })
+    await $.fs.write(source, last.text)
+    await $.store.set(backupKey(source), { saves: (await backupsOf($, source)).slice(0, -1) })
     // The file is as it was before the save; the changes that save wrote stay in force for this session, as before it.
-    savedFrom.delete(source)
+    // A session rule it held no more goes back among the session rules, so it is never lost.
+    const { [source]: entry, ...others } = await read($, savedFrom)
+    if (entry !== undefined) {
+      const lines = new Set(last.text.split(/\r?\n/).map(line => line.trim()))
+      const back = entry.rules.filter(rule => !lines.has(`- ${rule}`))
+      const still = entry.rules.filter(rule => !back.includes(rule))
+      await update($, savedFrom, () => (still.length === 0 ? others : { ...others, [source]: { ids: [], rules: still, loaded: entry.loaded } }))
+      if (back.length > 0) {
+        const list = await read($, sessionRules)
+        await update($, sessionRules, () => [...list, ...back.filter(rule => !list.includes(rule))])
+      }
+    }
     $.ui.invalidate('prompt.context')
 
     return notify($, source, `restored ${source}`)
@@ -484,6 +610,12 @@ async function saveSessionRule($: EngineInterface, rule: string): Promise<string
     if (refusal !== null) {
       return notify($, SESSION_RULES, refusal)
     }
+    // In the file now, it is no longer a session rule: Claude reads it once, from the block until the engine reads the file again.
+    const inForce = await read($, sessionRules)
+    const waiting = await read($, pendingSessionRules)
+    await update($, sessionRules, () => inForce.filter(one => one !== rule))
+    await update($, pendingSessionRules, () => (waiting === null ? null : waiting.filter(one => one !== rule)))
+    await recordSave($, path, [], [rule])
     $.ui.invalidate('prompt.context')
 
     return notify($, SESSION_RULES, `saved to ${path}`)
@@ -494,12 +626,30 @@ async function saveSessionRule($: EngineInterface, rule: string): Promise<string
 
 // ---------------------------------------------------------------- large results
 
-async function isCutReady($: EngineInterface): Promise<boolean> {
+/**
+ * Why headspace-cut cannot answer a removal now, or null when it can: it
+ * wrote `ready` at session start, and its heartbeat `seenAt` is no older than
+ * the last main-loop turn's start (before the first turn ends, ready is
+ * enough). A heartbeat older than that means it stopped running: disabled
+ * during the session, it no longer answers, and core would summarize.
+ */
+async function cutMissing($: EngineInterface): Promise<string | null> {
+  let ready: unknown
+  let seenAt: unknown
   try {
-    return (await $.state.get({ plugin: 'headspace-cut', key: 'ready' })).value === true
+    ready = (await $.state.get({ plugin: 'headspace-cut', key: 'ready' })).value
+    seenAt = (await $.state.get({ plugin: 'headspace-cut', key: 'seenAt' })).value
   } catch {
-    return false
+    ready = undefined
   }
+  if (ready !== true) {
+    return 'install headspace-cut to remove results'
+  }
+  if (turnStartedAt !== null && !(typeof seenAt === 'number' && seenAt >= turnStartedAt)) {
+    return 'headspace-cut is not running: turn it on to remove results'
+  }
+
+  return null
 }
 
 /** Why a cut cannot run now, or null when it can. */
@@ -513,11 +663,8 @@ async function cutRefusal($: EngineInterface): Promise<string | null> {
   if ((await read($, marks)).length === 0) {
     return 'no results marked'
   }
-  if (!(await isCutReady($))) {
-    return 'install headspace-cut to remove results'
-  }
 
-  return null
+  return cutMissing($)
 }
 
 async function toggleMark($: EngineInterface, id: string): Promise<void> {
@@ -567,6 +714,44 @@ async function applyCut($: EngineInterface): Promise<string | null> {
   return null
 }
 
+/** What the marked results free, and the cache removing them rewrites (everything from the first one on). */
+async function cutFigures($: EngineInterface): Promise<{ ids: Set<string>; frees: number; cost: number }> {
+  const ids = new Set((await read($, marks)).map(m => m.id))
+  const frees = lastLarge.filter(r => ids.has(r.id)).reduce((sum, r) => sum + r.tokens, 0)
+
+  return { ids, frees, cost: cacheCost(lastApi, [...ids], lastMessageTokens) }
+}
+
+/**
+ * The pane's apply: a removal cannot be undone, so it asks first, as save
+ * does; Cancel, or a dismissed question, leaves everything as it was. A
+ * removal refused already asks nothing: the pane says why beside the button.
+ */
+async function confirmCut($: EngineInterface): Promise<void> {
+  if ((await cutRefusal($)) !== null) {
+    return
+  }
+  const { ids, frees, cost } = await cutFigures($)
+  const question = `Remove ${count(ids.size, 'result')} from what Claude reads? This cannot be undone. Frees ${formatTokens(frees)}, rewrites ~${formatTokens(cost)} of cache.`
+  if (await confirm($, question, 'Remove')) {
+    await applyCut($)
+  }
+}
+
+/**
+ * `/headspace cut`, once the command is answered: typed on purpose, so it asks
+ * nothing. A refusal by then (a turn started meanwhile) is said in a toast.
+ */
+async function typedCut($: EngineInterface): Promise<void> {
+  const refusal = await cutRefusal($)
+  if (refusal !== null) {
+    $.ui.toast('headspace: ' + refusal)
+
+    return
+  }
+  await applyCut($)
+}
+
 // ---------------------------------------------------------------- the pane
 
 async function openOn($: EngineInterface, kind: HeadspaceKind): Promise<void> {
@@ -588,8 +773,22 @@ const LIGHTER: Record<HeadspaceKind, string> = {
 }
 const STONE = COLOURS.system
 const CLAY = COLOURS.rules
-/** What the bar leaves beside it for the text, per fallback. */
-const BESIDE: Record<ReturnType<typeof fallback>, number> = { full: 50, counts: 30, bare: 6 }
+/**
+ * What the bar leaves beside it for the text, per fallback: room for every
+ * kind's label, the counts and the percentage (`100%`, 4 cells, and the two
+ * gaps of 2 around it: 8), at their widest.
+ * full: `sys` `rules 999k` `conv` `large 999k` `free` `res` (34) and `99 off`
+ * `99 marked` (15), gaps of 2 between the eight (14): 63, so 71.
+ * counts: the short labels (24) and the counts (15), gaps of 1 (7): 46, so 54.
+ * bare: six letters and five gaps of 1: 11, so 19.
+ * The stale line is cut to what is left.
+ */
+const BESIDE: Record<ReturnType<typeof fallback>, number> = { full: 71, counts: 54, bare: 19 }
+/** The gap between the things after the percentage, per fallback. */
+const GAP: Record<ReturnType<typeof fallback>, number> = { full: 2, counts: 1, bare: 1 }
+/** Each kind's label where the band has little room: short, and in a bare band one letter (`b` for the reserve, the autocompact buffer). */
+const SHORT: Record<HeadspaceKind, string> = { system: 'sys', rules: 'rules', conversation: 'conv', large: 'large', free: 'free', reserve: 'res' }
+const LETTER: Record<HeadspaceKind, string> = { system: 's', rules: 'r', conversation: 'c', large: 'l', free: 'f', reserve: 'b' }
 const BAR_MAX = 60
 const BAR_MIN = 6
 
@@ -697,19 +896,13 @@ function press($: EngineInterface, where: string, work: () => Promise<unknown>):
   void work().catch(() => lose($, where))
 }
 
-/** The pieces a kind holds, for its card: rules, results, parts, messages. */
-function pieces(kind: HeadspaceKind, rules: readonly string[]): string | null {
-  switch (kind) {
-    case 'rules':
-      return count(ruleGroups().reduce((sum, g) => sum + g.rules.length, 0) + rules.length, 'rule')
-    case 'large':
-      return count(lastLarge.length, 'result')
-    case 'conversation':
-      return count(lastApi.length, 'message')
-    case 'system':
-      return count(categoriesOf('system').length, 'part')
-    default:
-      return null
+/** The pieces each kind holds, for the cards: rules, results, messages, parts. Counted once per draw: the rules mean parsing every file. */
+function pieces(rules: readonly string[]): Partial<Record<HeadspaceKind, string>> {
+  return {
+    rules: count(ruleGroups().reduce((sum, g) => sum + g.rules.length, 0) + rules.length, 'rule'),
+    large: count(lastLarge.length, 'result'),
+    conversation: count(lastApi.length, 'message'),
+    system: count(categoriesOf('system').length, 'part'),
   }
 }
 
@@ -741,8 +934,8 @@ function segment($: EngineInterface, { Box, Text, Button }: Els, kind: Headspace
 }
 
 /** What a kind's card says: `rules 4k  12 rules  click to view and remove`. */
-function cardText(kind: HeadspaceKind, tokens: number, rules: readonly string[]): string {
-  const what = pieces(kind, rules)
+function cardText(kind: HeadspaceKind, tokens: number, held: Partial<Record<HeadspaceKind, string>>): string {
+  const what = held[kind] ?? null
   const action = kind === 'rules' || kind === 'large' ? 'click to view and remove' : 'view only'
 
   return [`${kind} ${formatTokens(tokens)}`, what, action].filter((part): part is string => part !== null).join('  ')
@@ -917,11 +1110,8 @@ async function rulesBody($: EngineInterface, { Box, Text, Button }: Els, Input: 
 
 /** The large tab: the results biggest first, each marked or not, and apply. */
 async function largeBody($: EngineInterface, { Box, Text, Button }: Els, columns: number, at: Cursor | null): Promise<RenderElement> {
-  const marked = await read($, marks)
-  const ids = new Set(marked.map(m => m.id))
   const refusal = await cutRefusal($)
-  const frees = lastLarge.filter(r => ids.has(r.id)).reduce((sum, r) => sum + r.tokens, 0)
-  const cost = cacheCost(lastApi, [...ids], lastMessageTokens)
+  const { ids, frees, cost } = await cutFigures($)
 
   return (
     <Box flexDirection="column" gap={1}>
@@ -952,7 +1142,7 @@ async function largeBody($: EngineInterface, { Box, Text, Button }: Els, columns
         })}
       </Box>
       <Box gap={2}>
-        <Button key="apply-cut" label="apply" dimColor={refusal === null ? undefined : true} onPress={() => press($, 'ui.press', () => applyCut($))} />
+        <Button key="apply-cut" label="apply" dimColor={refusal === null ? undefined : true} onPress={() => press($, 'ui.press', () => confirmCut($))} />
         <Text color={refusal === null ? undefined : STONE}>{refusal ?? `frees ${formatTokens(frees)}, rewrites ~${formatTokens(cost)}`}</Text>
       </Box>
       {refusal === null && cutNotice !== null && <Text color={CLAY}>{cutNotice}</Text>}
@@ -996,11 +1186,13 @@ function isBlank(tree: RenderElement | null | undefined): boolean {
 const CARD_MIN = 12
 
 /**
- * The band's row: the bar, the percentage, then per fallback the labels and
- * counts, each label a plain Button that opens the pane on its kind (the
- * keyboard's way in: ctrl+x tab, the arrows, Enter). The percentage opens it
- * on rules, so even a bare band has one. Under the pointer, a segment's card
- * takes the labels' place.
+ * The band's row: the bar, the percentage, then a plain Button per kind that
+ * holds anything, each opening the pane on its kind (the keyboard's way in:
+ * ctrl+x tab, the arrows, Enter), with the counts after the kinds they count.
+ * Per fallback the kinds read `rules 4k` and `large 9.9k` beside short names
+ * (full), short names (counts) or one letter each (bare, without the counts).
+ * The percentage opens the pane on rules. Under the pointer, a segment's card
+ * takes the labels' place; a bare band, all letters, has no cards.
  */
 async function bandRow($: EngineInterface, els: Els, shot: HeadspaceSnapshot, bodyColumns: number): Promise<RenderElement> {
   const { Box, Text, Button } = els
@@ -1013,27 +1205,33 @@ async function bandRow($: EngineInterface, els: Els, shot: HeadspaceSnapshot, bo
   const stale = await read($, staleCount)
   const cells = widths(shot.segments, shot.window, columns).filter(cell => cell.width > 0)
   const percent = `${Math.round(shot.percent)}%`
-  const counts: (Item | null)[] = [
-    off > 0 ? { key: 'label-off', text: `${off} off`, opens: 'rules' } : null,
-    marked > 0 ? { key: 'label-marked', text: `${marked} marked`, opens: 'large' } : null,
-    stale > 0 ? { key: 'stale', text: stale === 1 ? '1 change no longer applies' : `${stale} changes no longer apply`, opens: null } : null,
+  const labelOf = (kind: HeadspaceKind): string => {
+    if (mode === 'bare') {
+      return LETTER[kind]
+    }
+
+    return mode === 'full' && (kind === 'rules' || kind === 'large') ? `${kind} ${formatTokens(tokens[kind] ?? 0)}` : SHORT[kind]
+  }
+  const after: Partial<Record<HeadspaceKind, Item>> =
+    mode === 'bare'
+      ? {}
+      : {
+          ...(off > 0 ? { rules: { key: 'label-off', text: `${off} off`, opens: 'rules' } } : {}),
+          ...(marked > 0 ? { large: { key: 'label-marked', text: `${marked} marked`, opens: 'large' } } : {}),
+        }
+  const items: Item[] = [
+    ...cells.flatMap(cell => [{ key: `label-${cell.kind}`, text: labelOf(cell.kind), opens: cell.kind }, ...(after[cell.kind] === undefined ? [] : [after[cell.kind] as Item])]),
+    ...(mode !== 'bare' && stale > 0 ? [{ key: 'stale', text: stale === 1 ? '1 change no longer applies' : `${stale} changes no longer apply`, opens: null }] : []),
   ]
-  const labels: (Item | null)[] = [
-    { key: 'label-rules', text: `rules ${formatTokens(tokens.rules ?? 0)}`, opens: 'rules' },
-    counts[0] ?? null,
-    (tokens.large ?? 0) > 0 ? { key: 'label-large', text: `large ${formatTokens(tokens.large ?? 0)}`, opens: 'large' } : null,
-    counts[1] ?? null,
-    counts[2] ?? null,
-  ]
-  const items = (mode === 'full' ? labels : mode === 'counts' ? counts : []).filter((item): item is Item => item !== null)
   // The cells the bar and the percentage leave, less the two gaps between them.
   const room = bodyColumns - cells.reduce((sum, cell) => sum + cell.width, 0) - percent.length - 4
+  const held = pieces(rules)
 
   return (
     <Box gap={2}>
       <Box flexShrink={0}>{cells.map(cell => segment($, els, cell.kind, cell.width))}</Box>
       <Button key="label-percent" plain label={percent} onPress={() => press($, 'ui.press', () => openOn($, 'rules'))} />
-      <Box gap={2} flexGrow={1} flexShrink={1}>
+      <Box gap={GAP[mode]} flexGrow={1} flexShrink={1}>
         {items.map(item =>
           item.opens === null ? (
             <Text key={item.key} color={CLAY} wrap="truncate-end">
@@ -1043,7 +1241,7 @@ async function bandRow($: EngineInterface, els: Els, shot: HeadspaceSnapshot, bo
             <Button key={item.key} plain dimColor label={item.text} onPress={() => press($, 'ui.press', () => openOn($, item.opens ?? 'rules'))} />
           ),
         )}
-        {room >= CARD_MIN && cells.map(cell => card(els, cell.kind, cardText(cell.kind, tokens[cell.kind] ?? 0, rules), room))}
+        {mode !== 'bare' && room >= CARD_MIN && cells.map(cell => card(els, cell.kind, cardText(cell.kind, tokens[cell.kind] ?? 0, held), room))}
       </Box>
     </Box>
   )
@@ -1077,6 +1275,11 @@ export const register: Register = (on, options) => {
       return next(e)
     }
     isTurnRunning = false
+    try {
+      turnStartedAt = (await $.clock.now()) - (Number.isFinite(e.durationMs) ? e.durationMs : 0)
+    } catch {
+      // The last start stands.
+    }
     const done = await next(e)
     try {
       await refresh($)
@@ -1094,11 +1297,14 @@ export const register: Register = (on, options) => {
   on('prompt.context', async ($, e, next) => {
     const core = await next(e)
     try {
-      const inForce = (await read($, applied)).filter(f => f.source !== MEMORY)
-      const rules = await read($, sessionRules)
+      const previous = lastFiles
       if (e.instructionFiles !== undefined) {
         lastFiles = e.instructionFiles
       }
+      const carried = await settleSaved($, e.instructionFiles)
+      const inForce = (await read($, applied)).filter(f => f.source !== MEMORY)
+      const own = await read($, sessionRules)
+      const rules = [...own, ...carried.filter(rule => !own.includes(rule))]
       if (inForce.length === 0 && rules.length === 0) {
         return core
       }
@@ -1110,7 +1316,7 @@ export const register: Register = (on, options) => {
           const files = e.instructionFiles
           const rewritten: PromptContextBlock[] = []
           for (const block of blocks) {
-            rewritten.push(block.name === 'claudeMd' ? await rewriteClaudeMd($, block, files) : block)
+            rewritten.push(block.name === 'claudeMd' ? await rewriteClaudeMd($, block, files, previous) : block)
           }
           blocks = rewritten
         }
@@ -1164,7 +1370,7 @@ export const register: Register = (on, options) => {
         }
         const count = (await read($, marks)).length
         // A compaction cannot start under the turn this hook holds: it starts once the command is answered.
-        $.clock.after(0, () => void applyCut($))
+        $.clock.after(0, () => void typedCut($).catch(() => lose($, '/headspace cut')))
 
         return { text: `removing ${count} ${count === 1 ? 'result' : 'results'}` }
       }

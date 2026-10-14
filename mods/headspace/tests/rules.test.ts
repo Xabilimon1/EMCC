@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { diffLines, parseRules, renderRules } from '../hooks/rules'
+import { diffLines, isReflected, parseRules, renderRules } from '../hooks/rules'
 
 const HEADINGS_AND_LISTS = [
   '# Git',
@@ -292,5 +292,34 @@ describe('diffLines', () => {
       { type: 'out', text: 'b' },
     ])
     expect(diffLines('', '')).toEqual([])
+  })
+})
+
+describe('isReflected', () => {
+  const BEFORE = '# Git\n\n- One.\n- Two.\n- Three.\n'
+  const id = (words: string, text = BEFORE) => parseRules(text).rules.find(r => r.lines[0]?.includes(words))?.id ?? ''
+
+  test('a rule turned off is in the text when its lines are gone and the rules after it moved up', () => {
+    expect(isReflected(parseRules(BEFORE), parseRules('# Git\n\n- One.\n- Three.\n'), id('Two'), [{ type: 'off' }])).toBe(true)
+    // The last rule gone: nothing at its place.
+    expect(isReflected(parseRules(BEFORE), parseRules('# Git\n\n- One.\n- Two.\n'), id('Three'), [{ type: 'off' }])).toBe(true)
+  })
+
+  test('a rule turned off and rewritten by hand is not in the text', () => {
+    expect(isReflected(parseRules(BEFORE), parseRules('# Git\n\n- One.\n- Two, always.\n- Three.\n'), id('Two'), [{ type: 'off' }])).toBe(false)
+  })
+
+  test('a rule turned off whose lines are still there, moved, is not in the text', () => {
+    expect(isReflected(parseRules(BEFORE), parseRules('# Git\n\n- One.\n- Three.\n- Two.\n'), id('Two'), [{ type: 'off' }])).toBe(false)
+  })
+
+  test('an edit or an added line is in the text when a rule reads as the change makes it', () => {
+    const changes = [{ type: 'edit' as const, lineIndex: 0, text: '- Deux.' }, { type: 'addLine' as const, afterLineIndex: 0, text: '  and more.' }]
+    expect(isReflected(parseRules(BEFORE), parseRules('# Git\n\n- One.\n- Deux.\n  and more.\n- Three.\n'), id('Two'), changes)).toBe(true)
+    expect(isReflected(parseRules(BEFORE), parseRules('# Git\n\n- One.\n- Deux.\n- Three.\n'), id('Two'), changes)).toBe(false)
+  })
+
+  test('a text without the rule tells nothing', () => {
+    expect(isReflected(parseRules('- Other.\n'), parseRules(BEFORE), id('Two'), [{ type: 'off' }])).toBeNull()
   })
 })

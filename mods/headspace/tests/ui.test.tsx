@@ -111,6 +111,47 @@ function shown(element: unknown): string {
   return label + (children ?? []).map(shown).join('')
 }
 
+/** The person answering `$.ui.ask`, one answer per question in order; a question past them is dismissed. */
+function answering(on: Parameters<typeof session>[0], answers: string[]): { asked: string[] } {
+  const it = { asked: [] as string[] }
+  on('tool.call', { tool: 'AskUserQuestion' }, (_$, e) => {
+    const [question] = (e as unknown as { questions: { question: string }[] }).questions
+    it.asked.push(question?.question ?? '')
+    const answer = answers.shift()
+    if (answer === undefined) {
+      return { isError: true, result: 'dismissed', text: 'The user dismissed the question' } as never
+    }
+
+    return { result: { questions: [question], answers: { [question?.question ?? '']: answer } } } as never
+  })
+
+  return it
+}
+
+/**
+ * The cells a row takes: its Texts and Buttons side by side, with each Box's
+ * gap between its children. What a hover-only Box holds, or an absolute one,
+ * takes none.
+ */
+function rowWidth(tree: unknown): number {
+  if (typeof tree === 'string' || typeof tree === 'number') {
+    return String(tree).length
+  }
+  if (tree === null || typeof tree !== 'object') {
+    return 0
+  }
+  const { type, props, children } = tree as { type?: string; props?: { label?: string; display?: string; position?: string; gap?: number }; children?: unknown[] }
+  if (type === 'Button') {
+    return props?.label?.length ?? 0
+  }
+  if (props?.display === 'none' || props?.position === 'absolute') {
+    return 0
+  }
+  const parts = (children ?? []).map(rowWidth).filter(width => width > 0)
+
+  return parts.reduce((sum, width) => sum + width, 0) + (type === 'Box' ? (props?.gap ?? 0) * Math.max(0, parts.length - 1) : 0)
+}
+
 /** The engine beneath headspace with nothing of its own to show: an empty band. */
 function quietBand(on: Parameters<typeof session>[0]): void {
   on('ui.render', ($, e) => {
@@ -290,25 +331,51 @@ describe('the band', () => {
     await ui.unmount()
   })
 
-  test('each label after the bar is a Button shown at rest, the keyboard’s way into the pane on its kind', WITH_PROBE, async ($, on) => {
+  test('each kind that holds anything has a Button shown at rest in every width, the keyboard’s way into the pane on it', WITH_PROBE, async ($, on) => {
     const it = session(on)
     quietBand(on)
     await filled($, it)
     await seed($, 'marks', [{ id: 't1', label: 'Read src/data.json (9.9k tokens)' }])
-    const ui = await band($)
-    // ctrl+x tab reaches the Buttons the band shows; the ones under a hover-only Box are the pointer's.
-    expect(visibleButtons(await ui.drawn())).toEqual(['label-percent', 'label-rules', 'label-large', 'label-marked'])
-    for (const [key, kind] of [['label-large', 'large'], ['label-rules', 'rules'], ['label-marked', 'large'], ['label-percent', 'rules']]) {
-      await command($, 'headspace', kind === 'rules' ? 'free' : 'system')
-      await ui.press({ key: key as string })
-      await it.clock.settle()
-      expect(await state($, 'selected')).toBe(kind)
+    const KINDS = ['system', 'rules', 'conversation', 'large', 'free', 'reserve']
+    const widths: [number, string[], string[]][] = [
+      [120, ['label-percent', 'label-system', 'label-rules', 'label-conversation', 'label-large', 'label-marked', 'label-free', 'label-reserve'], ['sys', 'rules 4k', 'conv', 'large ', 'free', 'res']],
+      [80, ['label-percent', 'label-system', 'label-rules', 'label-conversation', 'label-large', 'label-marked', 'label-free', 'label-reserve'], ['sys', 'rules', 'conv', 'large', 'free', 'res']],
+      [50, ['label-percent', 'label-system', 'label-rules', 'label-conversation', 'label-large', 'label-free', 'label-reserve'], ['s', 'r', 'c', 'l', 'f', 'b']],
+    ]
+    for (const [columns, keys, labels] of widths) {
+      const ui = await band($, 'terminal', columns)
+      // ctrl+x tab reaches the Buttons the band shows; the ones under a hover-only Box are the pointer's.
+      expect(visibleButtons(await ui.drawn())).toEqual(keys)
+      for (const [i, kind] of KINDS.entries()) {
+        expect((await ui.find({ key: `label-${kind}` }))?.text.startsWith(labels[i] ?? '?')).toBe(true)
+        await command($, 'headspace', kind === 'rules' ? 'free' : 'rules')
+        await ui.press({ key: `label-${kind}` })
+        await it.clock.settle()
+        expect(await state($, 'selected')).toBe(kind)
+      }
+      for (const [key, kind] of [['label-percent', 'rules'], ...(keys.includes('label-marked') ? [['label-marked', 'large']] : [])]) {
+        await command($, 'headspace', 'system')
+        await ui.press({ key: key as string })
+        await it.clock.settle()
+        expect(await state($, 'selected')).toBe(kind)
+      }
+      // All of it fits the width the band has.
+      expect(rowWidth(await ui.drawn())).toBeLessThanOrEqual(columns)
+      await ui.unmount()
     }
-    await ui.unmount()
-    // A bare band keeps the percentage, which opens the pane on rules.
-    const bare = await band($, 'terminal', 50)
-    expect(visibleButtons(await bare.drawn())).toEqual(['label-percent'])
-    await bare.unmount()
+  })
+
+  test('a kind that holds nothing has no cell and no Button', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    quietBand(on)
+    it.categories = ROWS
+    await endTurn($)
+    for (const columns of [120, 80, 50]) {
+      const ui = await band($, 'terminal', columns)
+      expect(await ui.find({ key: 'label-large' })).toBeUndefined()
+      expect(await ui.find({ key: 'label-rules' })).toBeDefined()
+      await ui.unmount()
+    }
   })
 
   test('labels and counts follow the bar; the stale line shows with staleCount', WITH_PROBE, async ($, on) => {
@@ -349,12 +416,13 @@ describe('the band', () => {
     await filled($, it)
     await seed($, 'marks', [{ id: 't1', label: 'Read src/data.json (9.9k tokens)' }])
     const counts = await band($, 'terminal', 80)
-    expect(await counts.find({ key: 'label-rules' })).toBeUndefined()
+    expect((await counts.find({ key: 'label-rules' }))?.text).toBe('rules')
     expect((await counts.find({ key: 'label-marked' }))?.text).toBe('1 marked')
     expect((await counts.find({ key: 'label-percent' }))?.text).toBe('31%')
     await counts.unmount()
     const bare = await band($, 'terminal', 50)
     expect(await bare.find({ key: 'label-marked' })).toBeUndefined()
+    expect((await bare.find({ key: 'label-rules' }))?.text).toBe('r')
     expect((await bare.find({ key: 'label-percent' }))?.text).toBe('31%')
     expect((await bare.findAll({ type: 'Text', text: /^[█░]+$/ })).length).toBe(6)
     // No room beside a bare bar for a card.
@@ -502,6 +570,7 @@ describe('the pane', () => {
 
   test('the large results: rows, view, mark and apply', WITH_PROBE, async ($, on) => {
     const it = session(on)
+    const person = answering(on, ['Remove'])
     await filled($, it)
     await command($, 'headspace-cut-ready', 'on')
     await command($, 'headspace', 'large')
@@ -521,7 +590,26 @@ describe('the pane', () => {
     expect((await ui.find({ type: 'Text', text: /^frees / }))?.text).toMatch(/^frees (9\.\d|10)k, rewrites ~(9\.\d|10)k$/)
     await ui.press({ key: 'apply-cut' })
     await it.clock.settle()
+    // A removal cannot be undone: the button asks first.
+    expect(person.asked.length).toBe(1)
     expect(it.compactions.at(-1)?.startsWith('headspace-cut:')).toBe(true)
+    await ui.unmount()
+  })
+
+  test('large apply asks first; Cancel sends no compaction and keeps the marks', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    const person = answering(on, ['Cancel'])
+    await filled($, it)
+    await command($, 'headspace-cut-ready', 'on')
+    await command($, 'headspace', 'large')
+    const ui = await pane($)
+    await ui.press({ key: 'mark-0' })
+    await ui.press({ key: 'apply-cut' })
+    await it.clock.settle()
+    expect(person.asked).toEqual([expect.stringMatching(/^Remove 1 result from what Claude reads\? This cannot be undone\. Frees (9\.\d|10)k, rewrites ~(9\.\d|10)k of cache\.$/)])
+    expect(it.compactions).toEqual([])
+    expect((await ui.find({ key: 'mark-0' }))?.text).toBe('[x]')
+    expect((await state($, 'marks')).length).toBe(1)
     await ui.unmount()
   })
 
@@ -549,6 +637,7 @@ describe('the pane', () => {
 
   test('a skipped removal shows its reason under apply and keeps the marks', WITH_PROBE, async ($, on) => {
     const it = session(on)
+    answering(on, ['Remove'])
     await filled($, it)
     await command($, 'headspace-cut-ready', 'on')
     await command($, 'headspace', 'large')

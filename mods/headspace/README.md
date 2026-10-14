@@ -21,16 +21,16 @@ One line above the prompt: a bar with one segment per kind, each as wide as its 
 
 The figures are Claude Code's own estimate, the one `/context` shows; headspace makes no token-count calls. Tool schemas loaded on demand (`MCP tools (deferred)` and the like) are not in the window, so they are not in the bar. The bar refreshes when a turn ends and when the pane opens; a subagent's turn end does not count.
 
-After the bar come labels, so a change is never forgotten: `rules 9.2k`, `2 off`, `large 16k`, `3 marked`, and `1 change no longer applies` when a rule you changed is no longer in its file.
+After the bar comes one label per kind that holds anything, in the bar's order, with the counts after the kind they count, so a change is never forgotten: `sys  rules 9.2k  2 off  conv  large 16k  3 marked  free  res`, and `1 change no longer applies` when a rule you changed is no longer in its file.
 
-On a narrow terminal the labels go first (under 100 columns), then the counts (under 70); the colours and the percentage stay, and every kind that holds anything keeps at least one cell.
+On a narrow terminal the labels shrink, and the bar with them so they fit: under 100 columns they lose their figures (`sys  rules  2 off  conv  large  3 marked  free  res`), under 70 they become one letter each and the counts go (`s r c l f b`, `b` for the reserve, the autocompact buffer). The colours and the percentage stay, and every kind that holds anything keeps at least one cell and one label.
 
 With emcc-core or witness installed, their band is drawn under headspace's line, never replaced.
 
 ## The hover and the pane
 
 - **Hover** a segment: it lights up, and in place of the labels a card says the kind, its tokens, how many pieces it holds, and what you can do (`click to view and remove`, or `view only`).
-- **Click** a segment, or a label, to open the pane on that kind. From the keyboard: `ctrl+x tab` moves into the band's labels, and Enter opens the one in focus. The percentage opens the pane on rules.
+- **Click** a segment, or a label, to open the pane on that kind. From the keyboard: `ctrl+x tab` moves into the band's labels, and Enter opens the one in focus. Every kind that holds anything has its label at every width, so the keyboard reaches each one. The percentage opens the pane on rules.
 - `/headspace` opens the pane on rules; `/headspace large` (or any other kind) on that kind.
 
 The pane has the six kinds as tabs across the top, in their colours, and the selected kind's pieces below. Esc closes it. headspace never opens the pane on its own.
@@ -61,11 +61,12 @@ A file splits into rules: each top-level list item with its continuation lines, 
 
 **Session rules** are typed into the field at the bottom. They go into the context as a block of headspace's own, and they are still there after `/compact`, because headspace adds the block again whenever Claude Code rebuilds the context. **remove** takes one out; like every change, it waits for apply.
 
-**Save to the file.** Changes made in the pane live only in this session until you save them. Each file has its own **save**: it shows the change line by line (`-` out, `+` in) and asks before writing. Before it writes, headspace keeps a copy of the file as it was, in Claude Code's storage for the plugin, never next to your CLAUDE.md, so no stray file lands in a repo. It keeps the last 10 saves per file. **undo save** puts the newest one back, after asking the same way.
+**Save to the file.** Changes made in the pane live only in this session until you save them. Each file has its own **save**: it shows the change line by line (`-` out, `+` in) and asks before writing. Before it writes, headspace keeps a copy of the file as it was, in Claude Code's storage for the plugin, never next to your CLAUDE.md, so no stray file lands in a repo. It keeps the last 10 saves per file. **undo save** puts the newest one back, after asking the same way, and uses it up: a second undo goes one save further back, it never redoes the first.
 
 - Save works on the file as it is on disk. A change whose rule reads differently there (Claude reads your files with comments and frontmatter stripped) is not saved, and the pane says how many.
 - If the file changes on disk while you are being asked, nothing is written: `changed on disk, nothing written`.
-- A session rule's **save** asks which CLAUDE.md, the project's or yours (`~/.claude/CLAUDE.md`, or the one under `CLAUDE_CONFIG_DIR`), and adds it as `- <rule>` under a `## Session rules` heading, made at the end of the file the first time.
+- A session rule's **save** asks which CLAUDE.md, the project's or yours (`~/.claude/CLAUDE.md`, or the one under `CLAUDE_CONFIG_DIR`), and adds it as `- <rule>` under a `## Session rules` heading, made at the end of the file the first time. Saved, it leaves the session rules: Claude reads it once, from headspace's block until Claude Code reads the file again (after `/compact` or `/clear`), then from the file. Undoing that save puts it back among the session rules.
+- A change you also made by hand in the file (the rule deleted, or the line edited the same way) leaves quietly when Claude Code reads the file again; it is not counted as a change that no longer applies.
 
 **Read-only:** files of type `managed` (set by an organization) show their rules, marked `managed`, with no buttons. headspace never turns them off, edits or saves them.
 
@@ -83,7 +84,13 @@ large  16.4k
 
 **view** shows the first 20 lines of a result. The checkbox marks it.
 
-**Apply** (or `/headspace cut`) removes the marked results. Each one becomes a single line in the conversation, and nothing else changes:
+**Apply** removes the marked results, after asking, because a removal cannot be undone:
+
+```
+Remove 2 results from what Claude reads? This cannot be undone. Frees 13.9k, rewrites ~112k of cache.
+```
+
+Cancel leaves everything as it was, marks included. `/headspace cut` is typed on purpose, so it does not ask; if it is refused by the time it runs (Claude started working meanwhile), a toast says why. Each removed result becomes a single line in the conversation, and nothing else changes:
 
 ```
 [headspace removed the result of Read src/data.json (9.8k tokens); run it again if you need it]
@@ -95,7 +102,7 @@ large  16.4k
 - Only tool results can be removed. Your prompts and Claude's answers never are, and neither is the turn in progress.
 - Your transcript shows a compaction boundary, as `/compact` does.
 
-The removal is a compaction answered by [`headspace-cut`](../headspace-cut), which installs with headspace: Claude Code never shows a plugin the compaction it started itself, so a second plugin answers it. Without headspace-cut (headspace loaded alone with `--plugin-dir`, or headspace-cut removed), apply is not offered and the pane says `install headspace-cut to remove results`. If headspace-cut cannot answer (a marked result is no longer there), it skips: the conversation stays as it is, the marks stay, and the pane shows why.
+The removal is a compaction answered by [`headspace-cut`](../headspace-cut), which installs with headspace: Claude Code never shows a plugin the compaction it started itself, so a second plugin answers it. Without headspace-cut (headspace loaded alone with `--plugin-dir`, or headspace-cut removed), apply is not offered and the pane says `install headspace-cut to remove results`. headspace-cut also marks every turn end it sees; if it misses one (turned off during the session), apply is not offered either and the pane says `headspace-cut is not running: turn it on to remove results`. If headspace-cut cannot answer (a marked result is no longer there), it skips: the conversation stays as it is, the marks stay, and the pane shows why.
 
 ### The fallback: `/compact headspace-cut:…`
 
@@ -135,7 +142,7 @@ claude --plugin-dir mods/headspace --plugin-dir mods/headspace-cut
 
 - `/headspace` opens the pane on rules. `/headspace <kind>` opens it on `rules`, `large`, `system`, `conversation`, `free` or `reserve`.
 - `/headspace apply` applies the rule changes waiting, as the pane's apply does.
-- `/headspace cut` removes the marked large results, as the pane's apply does.
+- `/headspace cut` removes the marked large results, as the pane's apply does, without asking first.
 
 ## Options
 
@@ -148,6 +155,7 @@ Set them in `/config`, or at install with `--config key=value`.
 ## What it hooks and calls
 
 - Hooks: `session.start`, `turn.start`, `turn.complete`, `prompt.context` (rules turned off, edits, the session rules block), `prompt.section` (`memory`, auto-memory entries turned off), `command.run` (`headspace`), `ui.render` (`AbovePrompt`, the `headspace` pane)
+- Reads headspace-cut's state: `ready` and its heartbeat `seenAt`
 - Calls: `$.session.usage`, `$.session.messages`, `$.session.cwd`, `$.session.root`, `$.session.compact`, `$.state.get`, `$.state.set`, `$.store.get` and `$.store.set` (the save backups), `$.fs.read`, `$.fs.exists` and `$.fs.write` (only the file being saved or restored), `$.env.get` (`HOME`, `CLAUDE_CONFIG_DIR`, to find your CLAUDE.md), `$.ui.open`, `$.ui.ask`, `$.ui.toast`, `$.ui.invalidate`, `$.ui.resolve`, `$.clock.now`, `$.clock.after`, `$.command.register`
 - Kept after the session: only the save backups. No network, no processes, no model calls.
 
@@ -157,4 +165,4 @@ Set them in `/config`, or at install with `--config key=value`.
 claude plugin test mods/headspace
 ```
 
-164 tests: the bar's kinds, widths and narrow fallbacks (24), rules parsed and rendered back byte for byte (38), auto-memory entries (12), large results, their cost and the removal instructions (17), the hooks, apply, removal, save and undo in a simulated session (50), and the band and the pane on both terminal and desktop (23). Each one was seen failing before it passed.
+181 tests: the bar's kinds, widths and narrow fallbacks (24), rules parsed and rendered back byte for byte, and changes already in a file (43), auto-memory entries (12), large results, their cost and the removal instructions (17), the hooks, apply, removal, save and undo in a simulated session (60), and the band and the pane on both terminal and desktop (25). Each one was seen failing before it passed.

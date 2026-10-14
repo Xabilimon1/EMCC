@@ -41,8 +41,8 @@ To try headspace without installing, load both folders: `claude --plugin-dir mod
 
 ## What it hooks and calls
 
-- Hooks: `session.start` (tells headspace it is there), `session.compact` (only to answer `headspace-cut:` compactions; every other one passes on untouched)
-- Calls: `$.state.set`
+- Hooks: `session.start` (tells headspace it is there), `turn.complete` (a heartbeat at every main-loop turn end, so headspace stops offering removals if headspace-cut is turned off during the session), `session.compact` (only to answer `headspace-cut:` compactions; every other one passes on untouched)
+- Calls: `$.state.set`, `$.clock.now`
 - Nothing is kept after the session. No network, no files, no processes, no model calls.
 
 ## Tests
@@ -51,4 +51,4 @@ To try headspace without installing, load both folders: `claude --plugin-dir mod
 claude plugin test mods/headspace-cut
 ```
 
-17 tests: reading the instructions and rebuilding the conversation (8), and answering compactions in a simulated session: which it answers, which it passes on, and when it skips (9). Each one was seen failing before it passed.
+18 tests: reading the instructions and rebuilding the conversation (8), and in a simulated session: which compactions it answers, which it passes on, and when it skips, and the session start and heartbeat it leaves for headspace (10). Each one was seen failing before it passed.

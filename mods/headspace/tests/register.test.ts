@@ -3,7 +3,7 @@ import type { Engine } from 'claude-code/testing'
 
 import { cutInstructions } from '../hooks/large'
 import { memoryEntries } from '../hooks/memory'
-import { parseRules } from '../hooks/rules'
+import { hash, parseRules } from '../hooks/rules'
 import { probe } from './fixtures/probe'
 import { command, endTurn, seed, session, startTurn, state } from './fixtures/session'
 import type { Row } from './fixtures/session'
@@ -121,6 +121,11 @@ function context($: Engine, files: unknown[] | null = FILES) {
   return $.prompt.context((files === null ? { blocks: BLOCKS } : { blocks: BLOCKS, instructionFiles: files }) as never)
 }
 
+/** Core's context once the engine read the project file again and found `text` in it. */
+function reread($: Engine, text: string) {
+  return $.prompt.context({ blocks: [{ name: 'claudeMd', text: CLAUDE_MD.replace(PROJECT_TEXT, text) }, BLOCKS[1]], instructionFiles: [FILES[0], { ...FILES[1], content: text }] } as never)
+}
+
 describe('the rules in the context', () => {
   test('nothing applied hands core’s blocks on unchanged', WITH_PROBE, async ($, on) => {
     session(on)
@@ -150,13 +155,56 @@ describe('the rules in the context', () => {
     expect(r.blocks[0]?.text).toBe(CLAUDE_MD.replace('- Two spaces.\n', '- Four spaces.\n- Tabs never.\n'))
   })
 
+  test('a file is found in its own frame, never in an earlier file that quotes its text', WITH_PROBE, async ($, on) => {
+    session(on)
+    // The user file holds the whole project file, and is framed first.
+    const quoting = USER_TEXT + PROJECT_TEXT
+    const files = [{ ...FILES[0], content: quoting }, FILES[1]]
+    const text = `Contents of ${USER} (user's private global instructions):\n\n${quoting}\n\nContents of ${PROJECT} (project instructions):\n\n${PROJECT_TEXT}`
+    await seed($, 'applied', [{ source: PROJECT, changes: { [ruleId('Never push')]: [{ type: 'off' }] } }])
+    const r = await $.prompt.context({ blocks: [{ name: 'claudeMd', text }], instructionFiles: files } as never)
+    expect(r.blocks[0]?.text).toBe(`Contents of ${USER} (user's private global instructions):\n\n${quoting}\n\nContents of ${PROJECT} (project instructions):\n\n${WITHOUT_NEVER}`)
+    expect((await state($, 'staleCount')) ?? 0).toBe(0)
+  })
+
+  test('the engine frames each file trimmed: a change to the last file still applies', WITH_PROBE, async ($, on) => {
+    session(on)
+    const text = `Contents of ${USER} (user's private global instructions):\n\n${USER_TEXT.trim()}\n\nContents of ${PROJECT} (project instructions):\n\n${PROJECT_TEXT.trim()}`
+    await seed($, 'applied', [{ source: PROJECT, changes: { [ruleId('Two spaces')]: [{ type: 'off' }] } }])
+    const r = await $.prompt.context({ blocks: [{ name: 'claudeMd', text }], instructionFiles: FILES } as never)
+    expect(r.blocks[0]?.text).toBe(text.replace('\n\n# Style\n\n- Two spaces.', '\n\n# Style'))
+    expect((await state($, 'staleCount')) ?? 0).toBe(0)
+  })
+
+  test('a change whose rule the file now reads as the change made it leaves quietly, never as stale', WITH_PROBE, async ($, on) => {
+    session(on)
+    const two = ruleId('Two spaces')
+    await seed($, 'applied', [{ source: PROJECT, changes: { [ruleId('Never push')]: [{ type: 'off' }], [two]: [{ type: 'edit', lineIndex: 0, text: '- Four spaces.' }] } }])
+    await context($)
+    // Made by hand in the file, the same changes: the rule gone, the line edited.
+    const byHand = WITHOUT_NEVER.replace('- Two spaces.', '- Four spaces.')
+    await reread($, byHand)
+    expect(await state($, 'applied')).toEqual([])
+    expect((await state($, 'staleCount')) ?? 0).toBe(0)
+  })
+
+  test('a rule turned off and then rewritten by hand still counts stale', WITH_PROBE, async ($, on) => {
+    session(on)
+    await seed($, 'applied', [{ source: PROJECT, changes: { [ruleId('Never push')]: [{ type: 'off' }] } }])
+    await context($)
+    await reread($, PROJECT_TEXT.replace('straight', 'directly'))
+    expect(await state($, 'applied')).toEqual([])
+    expect(await state($, 'staleCount')).toBe(1)
+  })
+
   test('a change whose rule changed on disk is dropped and counted stale', WITH_PROBE, async ($, on) => {
     session(on)
     const gone = ruleId('Never push', PROJECT_TEXT.replace('straight', 'directly'))
     const kept = ruleId('Two spaces')
     await seed($, 'applied', [{ source: PROJECT, changes: { [gone]: [{ type: 'off' }], [kept]: [{ type: 'off' }] } }])
     const r = await context($)
-    expect(r.blocks[0]?.text).toBe(CLAUDE_MD.replace('- Two spaces.\n', ''))
+    // The engine frames a file's text trimmed; its rendered text is framed the same way.
+    expect(r.blocks[0]?.text).toBe(CLAUDE_MD.replace('\n\n- Two spaces.\n', '\n'))
     expect(await state($, 'staleCount')).toBe(1)
     expect(await state($, 'applied')).toEqual([{ source: PROJECT, changes: { [kept]: [{ type: 'off' }] } }])
     // Counted once: the next read finds nothing stale left.
@@ -349,6 +397,58 @@ describe('removing large results', () => {
     })
   }
 
+  test('refused once headspace-cut’s heartbeat is older than the last turn’s start: it stopped running', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    it.categories = ROWS
+    it.api = conversation()
+    await command($, 'headspace-cut-ready', 'on')
+    await command($, 'headspace-cut-seen', '500')
+    await seed($, 'marks', [MARK])
+    // The turn ran from 8000 to 10000; headspace-cut last ran at 500.
+    await it.clock.advance(10_000)
+    await endTurn($, undefined, 2000)
+    expect(await command($, 'headspace', 'cut')).toBe('headspace: headspace-cut is not running: turn it on to remove results')
+    await it.clock.advance(1)
+    expect(it.compactions).toEqual([])
+  })
+
+  test('accepted when headspace-cut’s heartbeat is from within the last turn, whichever hook ran first', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    it.categories = ROWS
+    it.api = conversation()
+    await command($, 'headspace-cut-ready', 'on')
+    // Written as the turn ended, before headspace's own hook read the clock: the turn's start is the bound, not its end.
+    await command($, 'headspace-cut-seen', '8000')
+    await seed($, 'marks', [MARK])
+    await it.clock.advance(10_000)
+    await endTurn($, undefined, 2000)
+    expect(await command($, 'headspace', 'cut')).toBe('removing 1 result')
+    await it.clock.advance(1)
+    expect(it.compactions).toEqual([cutInstructions([MARK])])
+  })
+
+  test('before the first turn ends, ready is enough', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    await command($, 'headspace-cut-ready', 'on')
+    await command($, 'headspace-cut-seen', '0')
+    await seed($, 'marks', [MARK])
+    await it.clock.advance(10_000)
+    expect(await command($, 'headspace', 'cut')).toBe('removing 1 result')
+  })
+
+  test('/headspace cut refused when its timer fires says why in a toast', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    await command($, 'headspace-cut-ready', 'on')
+    await seed($, 'marks', [MARK])
+    expect((await $.command.run({ command: 'headspace', args: 'cut' } as never)).text).toBe('removing 1 result')
+    // A turn starts before the compaction could.
+    await $.turn.start({ text: 'go', turnId: 'turn-2' } as never)
+    await it.clock.advance(1)
+    expect(it.compactions).toEqual([])
+    expect(it.toasts).toEqual(['headspace: Claude is working: remove results between turns'])
+    expect(await state($, 'marks')).toEqual([MARK])
+  })
+
   test('refused while a turn runs, offered again once it ends', WITH_PROBE, async ($, on) => {
     const it = session(on)
     it.categories = ROWS
@@ -526,6 +626,8 @@ describe('saving rules to the file', () => {
     expect(d.backedUp).toEqual([true])
     expect(d.store.get(BACKUP)).toEqual({ saves: [{ at: 7000, text: PROJECT_TEXT }] })
     expect(it.invalidated).toContain('prompt.context')
+    // What the save wrote is session state, so a reload of headspace keeps it.
+    expect(await state($, 'savedFrom')).toEqual({ [PROJECT]: { ids: [ruleId('Never push')], rules: [], loaded: hash(PROJECT_TEXT) } })
     // The engine may still hold the text it read before the save: the rule stays out all the same.
     expect((await context($)).blocks[0]?.text).toBe(CLAUDE_MD.replace(PROJECT_TEXT, WITHOUT_NEVER))
     expect((await state($, 'applied')).length).toBe(1)
@@ -534,6 +636,7 @@ describe('saving rules to the file', () => {
     const r = await $.prompt.context({ blocks: [{ name: 'claudeMd', text: reread }], instructionFiles: [FILES[0], { ...FILES[1], content: WITHOUT_NEVER }] } as never)
     expect(r.blocks).toEqual([{ name: 'claudeMd', text: reread }])
     expect(await state($, 'applied')).toEqual([])
+    expect(await state($, 'savedFrom')).toEqual({})
     expect((await state($, 'staleCount')) ?? 0).toBe(0)
     expect(it.invalidated).toContain('ui.render')
     expect(await ui.find({ type: 'Text', text: new RegExp(`^saved to ${PROJECT}$`) })).toBeDefined()
@@ -592,13 +695,13 @@ describe('saving rules to the file', () => {
     // leaves applied, and the one that could not be saved stays in force for this session.
     const reread = CLAUDE_MD.replace(PROJECT_TEXT, WITHOUT_NEVER)
     const r = await $.prompt.context({ blocks: [{ name: 'claudeMd', text: reread }], instructionFiles: [FILES[0], { ...FILES[1], content: WITHOUT_NEVER }] } as never)
-    expect(r.blocks).toEqual([{ name: 'claudeMd', text: reread.replace('- Two spaces.\n', '') }])
+    expect(r.blocks).toEqual([{ name: 'claudeMd', text: reread.replace('\n\n- Two spaces.\n', '\n') }])
     expect(await state($, 'applied')).toEqual([{ source: PROJECT, changes: two }])
     expect((await state($, 'staleCount')) ?? 0).toBe(0)
     await ui.unmount()
   })
 
-  test('undo save asks, restores the newest backup and keeps the text it replaced in its place', WITH_PROBE, async ($, on) => {
+  test('undo save asks, restores the newest backup and uses it up, so a second undo never redoes', WITH_PROBE, async ($, on) => {
     session(on)
     const d = disk(on, { [PROJECT]: PROJECT_TEXT })
     await context($)
@@ -617,10 +720,10 @@ describe('saving rules to the file', () => {
     expect(d.asked[2]).toContain('+ - Never push straight to main.')
     expect(d.asked[2]?.endsWith(`Restore ${PROJECT} to how it was before the last save?`)).toBe(true)
     expect(d.files.get(PROJECT)).toBe(PROJECT_TEXT)
-    // The restored save is used up; what the undo wrote over is kept, so it too can be put back.
-    expect(d.store.get(BACKUP)).toEqual({ saves: [{ at: 0, text: WITHOUT_NEVER }] })
+    // The restored save is used up, and the text it wrote over is not kept as a save: nothing left to undo.
+    expect(d.store.get(BACKUP)).toEqual({ saves: [] })
     expect(d.backedUp).toEqual([true, true])
-    expect((await ui.find({ key: PROJECT_UNDO }))?.text).toBe('undo save')
+    expect(await ui.find({ key: PROJECT_UNDO })).toBeUndefined()
     expect(await ui.find({ type: 'Text', text: new RegExp(`^restored ${PROJECT}$`) })).toBeDefined()
     await ui.unmount()
   })
@@ -703,9 +806,52 @@ describe('saving a session rule', () => {
     expect(d.asked[1]?.endsWith(`Save these changes to ${PROJECT}?`)).toBe(true)
     expect(d.files.get(PROJECT)).toBe(PROJECT_TEXT + '\n## Session rules\n\n- Keep the public API unchanged\n')
     expect(d.store.get(BACKUP)).toEqual({ saves: [{ at: 0, text: PROJECT_TEXT }] })
+    // Saved, it is no longer a session rule: what was the second is now the first.
     d.answers = ['Project', 'Save']
-    await act(ui, 'session-save-1')
+    await act(ui, 'session-save-0')
     expect(d.files.get(PROJECT)).toBe(PROJECT_TEXT + '\n## Session rules\n\n- Keep the public API unchanged\n- Answer briefly\n')
+    await ui.unmount()
+  })
+
+  test('a saved session rule leaves the session rules; Claude reads it once, from the block until the engine reads the file', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    const d = disk(on, { [PROJECT]: PROJECT_TEXT })
+    await context($)
+    await seed($, 'sessionRules', ['Keep the public API unchanged', 'Answer briefly'])
+    await seed($, 'pendingSessionRules', ['Keep the public API unchanged', 'Answer briefly', 'Waiting'])
+    const ui = await pane($)
+    d.answers = ['Project', 'Save']
+    await act(ui, 'session-save-0')
+    expect(await state($, 'sessionRules')).toEqual(['Answer briefly'])
+    expect(await state($, 'pendingSessionRules')).toEqual(['Answer briefly', 'Waiting'])
+    expect(it.invalidated).toContain('prompt.context')
+    // The engine still hands the file as it read it: the rule rides in the block, once.
+    const block = (r: { blocks: readonly { name: string; text: string }[] }) => r.blocks.find(b => b.name === 'sessionRules')?.text
+    expect(block(await context($))).toBe('Session rules the person set for this session:\n- Answer briefly\n- Keep the public API unchanged')
+    // Typed again as a session rule meanwhile, it is still read once.
+    await seed($, 'sessionRules', ['Answer briefly', 'Keep the public API unchanged'])
+    expect(block(await context($))).toBe('Session rules the person set for this session:\n- Answer briefly\n- Keep the public API unchanged')
+    await seed($, 'sessionRules', ['Answer briefly'])
+    // Once it reads the saved file, the rule is in the file alone.
+    const saved = d.files.get(PROJECT) ?? ''
+    expect(block(await context($, [FILES[0], { ...FILES[1], content: saved }]))).toBe('Session rules the person set for this session:\n- Answer briefly')
+    expect(await state($, 'savedFrom')).toEqual({})
+    await ui.unmount()
+  })
+
+  test('undoing the save that wrote a session rule puts it back among the session rules', WITH_PROBE, async ($, on) => {
+    session(on)
+    const d = disk(on, { [PROJECT]: PROJECT_TEXT })
+    await context($)
+    await seed($, 'sessionRules', ['Keep the public API unchanged'])
+    const ui = await pane($)
+    d.answers = ['Project', 'Save', 'Restore']
+    await act(ui, 'session-save-0')
+    expect(await state($, 'sessionRules')).toEqual([])
+    await act(ui, PROJECT_UNDO)
+    expect(d.files.get(PROJECT)).toBe(PROJECT_TEXT)
+    expect(await state($, 'sessionRules')).toEqual(['Keep the public API unchanged'])
+    expect(await state($, 'savedFrom')).toEqual({})
     await ui.unmount()
   })
 
@@ -743,7 +889,7 @@ describe('saving a session rule', () => {
     session(on)
     const d = disk(on, {})
     d.env = { HOME: '/home/me', CLAUDE_CONFIG_DIR: '/cfg' }
-    await seed($, 'sessionRules', ['Answer briefly'])
+    await seed($, 'sessionRules', ['Answer briefly', 'Keep it short'])
     const ui = await pane($)
     d.answers = ['User', 'Save']
     await act(ui, 'session-save-0')
@@ -798,17 +944,20 @@ describe('save with nothing to do, or a file it cannot read', () => {
 })
 
 describe('undo and line ends', () => {
-  test('undo with older saves restores the newest and keeps the rest', WITH_PROBE, async ($, on) => {
+  test('undo with older saves restores the newest and keeps the rest; a second undo goes further back', WITH_PROBE, async ($, on) => {
     session(on)
     const older = [{ at: 1, text: 'first\n' }, { at: 2, text: 'second\n' }]
     const d = disk(on, { [PROJECT]: PROJECT_TEXT }, { [BACKUP]: { saves: older } })
     await context($)
     const ui = await pane($)
-    d.answers = ['Restore']
+    d.answers = ['Restore', 'Restore']
     await act(ui, PROJECT_UNDO)
     expect(d.files.get(PROJECT)).toBe('second\n')
-    expect(d.store.get(BACKUP)).toEqual({ saves: [older[0], { at: 0, text: PROJECT_TEXT }] })
+    expect(d.store.get(BACKUP)).toEqual({ saves: [older[0]] })
     expect((await ui.find({ key: PROJECT_UNDO }))?.text).toBe('undo save')
+    await act(ui, PROJECT_UNDO)
+    expect(d.files.get(PROJECT)).toBe('first\n')
+    expect(d.store.get(BACKUP)).toEqual({ saves: [] })
     await ui.unmount()
   })
 

@@ -1,4 +1,4 @@
-import type { Register } from 'claude-code'
+import type { EngineInterface, Register } from 'claude-code'
 
 import { CUT_PREFIX, cutMessages, parseCut } from './cut'
 
@@ -12,12 +12,35 @@ import { CUT_PREFIX, cutMessages, parseCut } from './cut'
  * summarize a conversation nobody asked to summarize. When it cannot answer,
  * it skips, and the conversation stays as it is.
  */
+/**
+ * The heartbeat: when headspace-cut last ran. headspace offers a removal only
+ * when it is no older than the last turn's start, so a headspace-cut disabled
+ * during the session stops being offered after the next turn.
+ */
+async function beat($: EngineInterface): Promise<void> {
+  try {
+    await $.state.set({ plugin: 'headspace-cut', key: 'seenAt' }, await $.clock.now())
+  } catch {
+    // headspace then reads the heartbeat as stale and does not offer to remove results.
+  }
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     try {
       await $.state.set({ plugin: 'headspace-cut', key: 'ready' }, true)
     } catch {
       // headspace then reads it as not installed and does not offer to remove results.
+    }
+    await beat($)
+
+    return next(e)
+  })
+
+  on('turn.complete', async ($, e, next) => {
+    // A subagent's turn end is not the main loop's: headspace compares with the main loop's turns alone.
+    if (e.agentId === undefined) {
+      await beat($)
     }
 
     return next(e)
@@ -37,6 +60,8 @@ export const register: Register = on => {
       return { skip: 'headspace-cut: nothing marked' }
     }
     try {
+      // e.messages is the live conversation: the types do not say whether it opens at the last compaction,
+      // but on 2.1.287 a second /compact was handed the first one's summary first and nothing from before it.
       const { messages, missing } = cutMessages(e.messages, request)
       if (missing.length > 0) {
         const count = missing.length === 1 ? '1 marked result is' : `${missing.length} marked results are`

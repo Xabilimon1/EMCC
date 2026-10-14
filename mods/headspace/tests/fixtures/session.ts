@@ -136,9 +136,9 @@ export async function startTurn($: Engine) {
   await settled()
 }
 
-/** Ends Claude's turn (it answered, and it is the person's move), or a subagent's with `agentId`. */
-export async function endTurn($: Engine, agentId?: string) {
-  const ended = { answer: 'Done.', durationMs: 0, isAborted: false, turnId: 'turn-1', reason: 'answer' }
+/** Ends Claude's turn (it answered, and it is the person's move), or a subagent's with `agentId`; the turn lasted `durationMs`. */
+export async function endTurn($: Engine, agentId?: string, durationMs = 0) {
+  const ended = { answer: 'Done.', durationMs, isAborted: false, turnId: 'turn-1', reason: 'answer' }
   const done = await $.turn.complete((agentId === undefined ? ended : { ...ended, agentId }) as never)
   await settled()
 
