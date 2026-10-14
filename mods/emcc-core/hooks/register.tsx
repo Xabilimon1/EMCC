@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, Register, RenderElement } from 'claude-code'
 
 import type { EmccBadge, EmccEvidence, EmccEvidenceKind, EmccFlag, EmccProfile, EmccTone } from '../types'
 import { exitCodeOf, kindsOf } from './evidence'
@@ -201,9 +201,11 @@ export const register: Register = (on, options) => {
     if (!halted && facts.length === 0 && slots.length === 0) {
       return next(e)
     }
+    // One band for every plugin: what draws beneath (headspace, witness) keeps the rows EMCC's one row leaves.
+    const below = await next({ ...e, props: { ...e.props, maxRows: Math.max(1, e.props.maxRows - 1) } })
     const { Box, Button, Text } = $.ui.resolve(e)
 
-    return (
+    const row = (
       <Box>
         <Text color={CLAY} bold>
           EMCC{' '}
@@ -226,5 +228,27 @@ export const register: Register = (on, options) => {
         />
       </Box>
     )
+    if (isBlank(below)) {
+      return row
+    }
+
+    return (
+      <Box flexDirection="column">
+        {row}
+        {below}
+      </Box>
+    )
   })
+}
+
+/** Whether a tree beneath draws nothing a person would see (no tree, or empty Boxes and Texts). */
+function isBlank(tree: RenderElement | null | undefined): boolean {
+  if (tree === null || tree === undefined) {
+    return true
+  }
+  if (tree.type !== 'Box' && tree.type !== 'Text') {
+    return false
+  }
+
+  return (tree.children ?? []).every(child => (typeof child === 'string' ? child === '' : typeof child === 'object' && child !== null && 'type' in child && isBlank(child as RenderElement)))
 }

@@ -10,7 +10,7 @@
       "name": "emcc-core",
       "source": "./mods/emcc-core",
       "description": "EMCC's shared base: the $.emcc noun (evidence, badges, profile, kill switch) and one status band above the prompt.",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "category": "development",
       "tags": [
         "emcc",
