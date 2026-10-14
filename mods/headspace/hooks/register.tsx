@@ -1,12 +1,22 @@
 import { atom, read, update } from 'claude-code'
-import type { ApiMessage, EngineInterface, InstructionFile, PromptContextBlock, Register } from 'claude-code'
+import type {
+  ApiMessage,
+  ElementConstructor,
+  ElementTable,
+  EngineInterface,
+  InputProps,
+  InstructionFile,
+  PromptContextBlock,
+  Register,
+  RenderElement,
+} from 'claude-code'
 
 import type { HeadspaceFileChanges, HeadspaceKind, HeadspaceRuleChange } from '../types'
-import { ORDER, toSegments } from './bar'
+import { COLOURS, ORDER, fallback, formatTokens, toSegments, widths } from './bar'
 import type { Category } from './bar'
-import { cutInstructions, label, largeResults } from './large'
+import { cacheCost, cutInstructions, label, largeResults } from './large'
 import type { LargeResult } from './large'
-import { renderMemory } from './memory'
+import { memoryEntries, renderMemory } from './memory'
 import { parseRules, renderRules } from './rules'
 
 const COMMAND = 'headspace'
@@ -40,6 +50,9 @@ let lastApi: ApiMessage[] = []
 /** The instruction files and the memory section as the engine last gave them, for the pane's rows. */
 let lastFiles: readonly InstructionFile[] = []
 let lastMemory: string | null = null
+/** The breakdown's categories and its Messages figure at the last refresh, for the pane's read-only kinds and the cut's cost. */
+let lastCategories: Category[] = []
+let lastMessageTokens: number | null = null
 /** Why the last cut did not happen (a refusal or a skip): shown in the pane, never a crash. */
 let cutNotice: string | null = null
 
@@ -77,6 +90,8 @@ async function refresh($: EngineInterface): Promise<void> {
   const at = await $.clock.now()
   lastApi = api
   lastLarge = results
+  lastCategories = categories
+  lastMessageTokens = messageTokens
   await update($, snapshot, () => ({ segments, window: breakdown.rawMaxTokens, percent: breakdown.percentage, at }))
   const live = new Set(results.map(r => r.id))
   const marked = await read($, marks)
@@ -276,8 +291,7 @@ async function toggleMark($: EngineInterface, id: string): Promise<void> {
 async function applyCut($: EngineInterface): Promise<string | null> {
   const refusal = await cutRefusal($)
   if (refusal !== null) {
-    cutNotice = refusal
-
+    // The pane works the refusal out again as it draws: nothing to keep.
     return refusal
   }
   cutNotice = null
@@ -316,6 +330,361 @@ async function openOn($: EngineInterface, kind: HeadspaceKind): Promise<void> {
 
 function isKind(word: string): word is HeadspaceKind {
   return (ORDER as readonly string[]).includes(word)
+}
+
+// ---------------------------------------------------------------- drawing
+
+/** Each kind lit under the pointer: a lighter shade of its colour. */
+const LIGHTER: Record<HeadspaceKind, string> = {
+  system: '#d1cfc6', rules: '#e9a58a', conversation: '#9cbde0', large: '#a5b78a', free: '#f4f3ee', reserve: '#d1cfc6',
+}
+const STONE = COLOURS.system
+const CLAY = COLOURS.rules
+/** What the bar leaves beside it for the text, per fallback. */
+const BESIDE: Record<ReturnType<typeof fallback>, number> = { full: 50, counts: 30, bare: 6 }
+const BAR_MAX = 60
+const BAR_MIN = 6
+
+type Els = Pick<ElementTable, 'Box' | 'Text' | 'Button'>
+type InputEl = ElementConstructor<InputProps> | undefined
+
+/** `1 rule`, `3 rules`. */
+function count(n: number, one: string, many = `${one}s`): string {
+  return `${n} ${n === 1 ? one : many}`
+}
+
+/** A one-line cut of `text` to `columns` cells, with an ellipsis when cut. */
+function cut(text: string, columns: number): string {
+  const room = Math.max(4, columns)
+
+  return text.length <= room ? text : text.slice(0, room - 1) + '…'
+}
+
+/** Characters over four, as the bar counts text it has no figure for. */
+function estimate(text: string): number {
+  return Math.round(text.length / 4)
+}
+
+/** The categories behind a read-only kind, as the breakdown named them. */
+function categoriesOf(kind: HeadspaceKind): Category[] {
+  return lastCategories.filter(c => {
+    if (c.kind === 'deferred') {
+      return false
+    }
+    if (kind === 'free') {
+      return c.kind === 'free'
+    }
+    if (kind === 'reserve') {
+      return c.kind === 'buffer'
+    }
+    if (kind === 'conversation') {
+      return c.kind === 'used' && c.name === 'Messages'
+    }
+
+    return kind === 'system' && c.kind === 'used' && c.name !== 'Messages' && c.name !== 'Memory files'
+  })
+}
+
+/** One file's rows for the pane: a file behind claudeMd, or the auto-memory index. */
+type RuleGroup = { source: string; title: string; isManaged: boolean; isMemory: boolean; rules: { id: string; lines: string[]; first: string }[] }
+
+function ruleGroups(): RuleGroup[] {
+  const groups: RuleGroup[] = lastFiles.map(file => ({
+    source: file.path,
+    title: `${file.path}  ${file.kind}  ${formatTokens(estimate(file.content))}`,
+    isManaged: file.kind === 'managed',
+    isMemory: false,
+    rules: parseRules(file.content).rules.map(rule => ({ id: rule.id, lines: rule.lines, first: rule.lines[0] ?? '' })),
+  }))
+  if (lastMemory !== null) {
+    const entries = memoryEntries(lastMemory)
+    if (entries.length > 0) {
+      groups.push({
+        source: MEMORY,
+        title: `auto-memory  memory  ${formatTokens(estimate(entries.map(e => e.line).join('\n')))}`,
+        isManaged: false,
+        isMemory: true,
+        rules: entries.map(entry => ({ id: entry.id, lines: [entry.line], first: entry.title })),
+      })
+    }
+  }
+
+  return groups
+}
+
+/** A rule's changes as the pane shows them: pending's list, else applied's. */
+function effective(waiting: readonly HeadspaceFileChanges[], inForce: readonly HeadspaceFileChanges[], source: string, id: string): HeadspaceRuleChange[] {
+  return waiting.find(f => f.source === source)?.changes[id] ?? inForce.find(f => f.source === source)?.changes[id] ?? []
+}
+
+/** The rules turned off and in force, every file and the memory together. */
+function offCount(inForce: readonly HeadspaceFileChanges[]): number {
+  return inForce.reduce((sum, file) => sum + Object.values(file.changes).filter(list => list.some(c => c.type === 'off')).length, 0)
+}
+
+/** Where the pane's cursor is: a rule (its file, id and selected line) or a large result. */
+type Cursor = { type: 'rule'; source: string; id: string; line: number } | { type: 'large'; id: string }
+
+function cursorOf(text: string | null): Cursor | null {
+  if (text === null) {
+    return null
+  }
+  try {
+    const value = JSON.parse(text) as unknown[]
+    if (value[0] === 'rule' && typeof value[1] === 'string' && typeof value[2] === 'string') {
+      return { type: 'rule', source: value[1], id: value[2], line: typeof value[3] === 'number' ? value[3] : 0 }
+    }
+    if (value[0] === 'large' && typeof value[1] === 'string') {
+      return { type: 'large', id: value[1] }
+    }
+  } catch {
+    // Not a cursor of this version: nothing selected.
+  }
+
+  return null
+}
+
+/** Runs a button's work; a failure is recorded, never thrown at the surface. */
+function press($: EngineInterface, where: string, work: () => Promise<unknown>): void {
+  void work().catch(() => lose($, where))
+}
+
+/** The pieces a kind holds, for its card: rules, results, parts, messages. */
+function pieces(kind: HeadspaceKind, rules: readonly string[]): string | null {
+  switch (kind) {
+    case 'rules':
+      return count(ruleGroups().reduce((sum, g) => sum + g.rules.length, 0) + rules.length, 'rule')
+    case 'large':
+      return count(lastLarge.length, 'result')
+    case 'conversation':
+      return count(lastApi.length, 'message')
+    case 'system':
+      return count(categoriesOf('system').length, 'part')
+    default:
+      return null
+  }
+}
+
+/** One segment of the bar: its cells, the same cells as a button under the pointer, and its card. */
+function segment($: EngineInterface, { Box, Text, Button }: Els, kind: HeadspaceKind, width: number, tokens: number, rules: readonly string[]): RenderElement {
+  const run = (kind === 'reserve' ? '░' : '█').repeat(width)
+  const what = pieces(kind, rules)
+  const isRemovable = kind === 'rules' || kind === 'large'
+
+  return (
+    <Box key={`seg-${kind}`} flexShrink={0}>
+      <Text color={COLOURS[kind]} dimColor={kind === 'free' ? true : undefined}>
+        {run}
+      </Text>
+      <Box position="absolute" top={0} left={0} display="none" hover={{ display: 'flex' }}>
+        <Button key={`open-${kind}`} plain label={run} hover={{ color: LIGHTER[kind] }} onPress={() => press($, 'ui.press', () => openOn($, kind))} />
+      </Box>
+      <Box position="absolute" top={-3} display="none" hover={{ display: 'flex' }} borderStyle="round" borderColor={COLOURS[kind]} flexDirection="column" paddingX={1}>
+        <Text bold>{`${kind}  ${formatTokens(tokens)}`}</Text>
+        {what !== null && <Text>{what}</Text>}
+        <Text color={STONE}>{isRemovable ? 'click to view and remove' : 'view only'}</Text>
+      </Box>
+    </Box>
+  )
+}
+
+/** The kinds as tabs: the selected one drawn inverse, the others pressable. */
+function tabs($: EngineInterface, { Box, Text, Button }: Els, shown: HeadspaceKind): RenderElement {
+  return (
+    <Box gap={2} flexWrap="wrap">
+      {ORDER.map(kind =>
+        kind === shown ? (
+          <Text key={`tab-${kind}-on`} color={COLOURS[kind]} inverse bold>
+            {` ${kind} `}
+          </Text>
+        ) : (
+          <Box key={`tab-box-${kind}`} gap={1}>
+            <Text color={COLOURS[kind]} dimColor={kind === 'free' ? true : undefined}>
+              {kind === 'reserve' ? '░' : '█'}
+            </Text>
+            <Button key={`tab-${kind}`} plain label={kind} onPress={() => press($, 'ui.press', () => showKind($, kind))} />
+          </Box>
+        ),
+      )}
+    </Box>
+  )
+}
+
+async function showKind($: EngineInterface, kind: HeadspaceKind): Promise<void> {
+  await update($, selected, () => kind)
+  await update($, cursor, () => null)
+}
+
+async function select($: EngineInterface, value: Cursor | null): Promise<void> {
+  const text = value === null ? null : JSON.stringify(value.type === 'rule' ? ['rule', value.source, value.id, value.line] : ['large', value.id])
+  await update($, cursor, () => text)
+}
+
+/** The rules tab: each file's rules, the session rules, and apply. */
+async function rulesBody($: EngineInterface, { Box, Text, Button }: Els, Input: InputEl, columns: number, at: Cursor | null): Promise<RenderElement> {
+  const waiting = await read($, pending)
+  const inForce = await read($, applied)
+  const shot = await read($, snapshot)
+  const rules = (await read($, pendingSessionRules)) ?? (await read($, sessionRules))
+  const groups = ruleGroups()
+  const waitingCount = waiting.reduce((sum, f) => sum + Object.keys(f.changes).length, 0) + ((await read($, pendingSessionRules)) === null ? 0 : 1)
+  const used = (shot?.segments ?? []).filter(s => s.kind !== 'free' && s.kind !== 'reserve').reduce((sum, s) => sum + s.tokens, 0)
+
+  return (
+    <Box flexDirection="column" gap={1}>
+      {groups.length === 0 && <Text color={STONE}>No instruction files read yet. They show after the next request.</Text>}
+      {groups.map((group, g) => (
+        <Box key={`group-${g}`} flexDirection="column">
+          <Text bold wrap="truncate-start">
+            {group.isManaged ? `${group.title}  managed` : group.title}
+          </Text>
+          {group.rules.map((rule, r) => {
+            const list = effective(waiting, inForce, group.source, rule.id)
+            const isOff = list.some(c => c.type === 'off')
+            const isAt = at?.type === 'rule' && at.source === group.source && at.id === rule.id
+            const tokens = formatTokens(estimate(rule.lines.join('\n')))
+            const first = cut(rule.first, columns - 12)
+
+            return (
+              <Box key={`rule-box-${g}-${r}`} flexDirection="column">
+                <Box gap={1}>
+                  <Text color={isOff ? STONE : CLAY}>{isOff ? '○' : '●'}</Text>
+                  {group.isManaged ? (
+                    <Text>{first}</Text>
+                  ) : (
+                    <Button
+                      key={`rule-${g}-${r}`}
+                      plain
+                      label={first}
+                      dimColor={isOff ? true : undefined}
+                      onPress={() => press($, 'ui.press', () => select($, isAt ? null : { type: 'rule', source: group.source, id: rule.id, line: 0 }))}
+                    />
+                  )}
+                  <Text color={STONE}>{tokens}</Text>
+                </Box>
+                {isAt && at?.type === 'rule' && (
+                  <Box flexDirection="column" marginLeft={2}>
+                    {rule.lines.map((line, l) =>
+                      rule.lines.length === 1 || group.isMemory ? (
+                        <Text key={`line-${l}`}>{line}</Text>
+                      ) : (
+                        <Button
+                          key={`line-${l}`}
+                          plain
+                          label={l === at.line ? `> ${line}` : `  ${line}`}
+                          onPress={() => press($, 'ui.press', () => select($, { type: 'rule', source: group.source, id: rule.id, line: l }))}
+                        />
+                      ),
+                    )}
+                    <Box gap={2}>
+                      <Button key="toggle" label={isOff ? 'on' : 'off'} onPress={() => press($, 'ui.press', () => toggleRule($, group.source, rule.id))} />
+                    </Box>
+                    {Input !== undefined && !group.isMemory && (
+                      <Input
+                        key="edit"
+                        label="edit "
+                        value={list.find((c): c is Extract<HeadspaceRuleChange, { type: 'edit' }> => c.type === 'edit' && c.lineIndex === at.line)?.text ?? rule.lines[at.line] ?? ''}
+                        onSubmit={value => press($, 'ui.input', () => editLine($, group.source, rule.id, at.line, value))}
+                      />
+                    )}
+                    {Input !== undefined && !group.isMemory && (
+                      <Input
+                        key="add-line"
+                        label="add line "
+                        placeholder="a line below the selected one"
+                        value=""
+                        onSubmit={value => press($, 'ui.input', () => addLine($, group.source, rule.id, at.line, value))}
+                      />
+                    )}
+                  </Box>
+                )}
+              </Box>
+            )
+          })}
+        </Box>
+      ))}
+      <Box flexDirection="column">
+        <Text bold>{`session rules  ${formatTokens(tokensOf(rules))}`}</Text>
+        {rules.map((rule, i) => (
+          <Box key={`session-${i}`} gap={1}>
+            <Text color={CLAY}>●</Text>
+            <Text>{rule}</Text>
+            <Button key={`session-remove-${i}`} plain dimColor label="remove" onPress={() => press($, 'ui.press', () => removeSessionRule($, i))} />
+          </Box>
+        ))}
+        {Input !== undefined && (
+          <Input key="session-rule" placeholder="add a session rule" value="" onSubmit={value => press($, 'ui.input', () => addSessionRule($, value))} />
+        )}
+      </Box>
+      <Box gap={2}>
+        <Button key="apply-rules" label="apply" variant="primary" onPress={() => press($, 'ui.press', () => applyRules($))} />
+        <Text color={STONE}>{`rewrites ~${formatTokens(used)} of cache`}</Text>
+        {waitingCount > 0 && <Text color={CLAY}>{count(waitingCount, 'change') + ' waiting'}</Text>}
+      </Box>
+    </Box>
+  )
+}
+
+/** The large tab: the results biggest first, each marked or not, and apply. */
+async function largeBody($: EngineInterface, { Box, Text, Button }: Els, columns: number, at: Cursor | null): Promise<RenderElement> {
+  const marked = await read($, marks)
+  const ids = new Set(marked.map(m => m.id))
+  const refusal = await cutRefusal($)
+  const frees = lastLarge.filter(r => ids.has(r.id)).reduce((sum, r) => sum + r.tokens, 0)
+  const cost = cacheCost(lastApi, [...ids], lastMessageTokens)
+
+  return (
+    <Box flexDirection="column" gap={1}>
+      {lastLarge.length === 0 && <Text color={STONE}>No tool result is that large.</Text>}
+      <Box flexDirection="column">
+        {lastLarge.map((result, i) => {
+          const what = result.target === '' ? result.tool : `${result.tool} ${result.target}`
+          const isAt = at?.type === 'large' && at.id === result.id
+
+          return (
+            <Box key={`large-${i}`} flexDirection="column">
+              <Box gap={1}>
+                <Button key={`mark-${i}`} plain label={ids.has(result.id) ? '[x]' : '[ ]'} onPress={() => press($, 'ui.press', () => toggleMark($, result.id))} />
+                <Text wrap="truncate-end">{`${what}  ${formatTokens(result.tokens)}  ${count(result.turnsAgo, 'turn')} ago`}</Text>
+                <Button key={`view-${i}`} plain dimColor label={isAt ? 'hide' : 'view'} onPress={() => press($, 'ui.press', () => select($, isAt ? null : { type: 'large', id: result.id }))} />
+              </Box>
+              {isAt && (
+                <Box flexDirection="column" marginLeft={4}>
+                  {result.preview.map((line, l) => (
+                    <Text key={`preview-${l}`} color={STONE} wrap="truncate-end">
+                      {cut(line, columns - 4)}
+                    </Text>
+                  ))}
+                </Box>
+              )}
+            </Box>
+          )
+        })}
+      </Box>
+      <Box gap={2}>
+        <Button key="apply-cut" label="apply" dimColor={refusal === null ? undefined : true} onPress={() => press($, 'ui.press', () => applyCut($))} />
+        <Text color={refusal === null ? undefined : STONE}>{refusal ?? `frees ${formatTokens(frees)}, rewrites ~${formatTokens(cost)}`}</Text>
+      </Box>
+      {refusal === null && cutNotice !== null && <Text color={CLAY}>{cutNotice}</Text>}
+      <Text color={STONE}>Removing cannot be undone. Your prompts and Claude's answers stay.</Text>
+    </Box>
+  )
+}
+
+/** A read-only kind: the categories behind it, with their tokens. */
+function categoriesBody({ Box, Text }: Els, kind: HeadspaceKind, tokens: number): RenderElement {
+  const rows = categoriesOf(kind)
+
+  return (
+    <Box flexDirection="column">
+      {rows.length === 0 && <Text color={STONE}>Nothing here yet.</Text>}
+      {rows.map((row, i) => (
+        <Text key={`category-${i}`}>{`${row.name}  ${formatTokens(kind === 'conversation' ? tokens : row.tokens)}`}</Text>
+      ))}
+      {kind === 'conversation' && <Text color={STONE}>The large tool results are counted under large.</Text>}
+      <Text color={STONE}>view only</Text>
+    </Box>
+  )
 }
 
 // ---------------------------------------------------------------- hooks
@@ -425,8 +794,6 @@ export const register: Register = (on, options) => {
       if (verb === 'cut') {
         const refusal = await cutRefusal($)
         if (refusal !== null) {
-          cutNotice = refusal
-
           return { text: `headspace: ${refusal}` }
         }
         const count = (await read($, marks)).length
@@ -446,6 +813,88 @@ export const register: Register = (on, options) => {
       await lose($, `/headspace ${verb}`.trimEnd())
 
       return { text: 'headspace lost track at /headspace' }
+    }
+  })
+
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    try {
+      const shot = await read($, snapshot)
+      if (shot === null || e.props.hasSurvey) {
+        return next(e)
+      }
+      const { Box, Text, Button } = $.ui.resolve(e)
+      const els = { Box, Text, Button }
+      const mode = fallback(e.props.bodyColumns)
+      const columns = Math.max(BAR_MIN, Math.min(BAR_MAX, e.props.bodyColumns - BESIDE[mode]))
+      const tokens = Object.fromEntries(shot.segments.map(s => [s.kind, s.tokens])) as Partial<Record<HeadspaceKind, number>>
+      const rules = await read($, sessionRules)
+      const off = offCount(await read($, applied))
+      const marked = (await read($, marks)).length
+      const stale = await read($, staleCount)
+      const counts = [
+        off > 0 ? `${off} off` : null,
+        marked > 0 ? `${marked} marked` : null,
+        stale > 0 ? (stale === 1 ? '1 change no longer applies' : `${stale} changes no longer apply`) : null,
+      ]
+      const items =
+        mode === 'full'
+          ? [`rules ${formatTokens(tokens.rules ?? 0)}`, counts[0], (tokens.large ?? 0) > 0 ? `large ${formatTokens(tokens.large ?? 0)}` : null, counts[1], counts[2]]
+          : mode === 'counts'
+            ? counts
+            : []
+
+      return (
+        <Box gap={2}>
+          <Box flexShrink={0}>
+            {widths(shot.segments, shot.window, columns)
+              .filter(cell => cell.width > 0)
+              .map(cell => segment($, els, cell.kind, cell.width, tokens[cell.kind] ?? 0, rules))}
+          </Box>
+          <Text bold>{`${Math.round(shot.percent)}%`}</Text>
+          {items
+            .filter((item): item is string => item !== null)
+            .map((item, i) => (
+              <Text key={`item-${i}`} color={item.includes('no longer') ? CLAY : STONE} wrap="truncate-end">
+                {item}
+              </Text>
+            ))}
+        </Box>
+      )
+    } catch {
+      // Writes are refused while drawing: the engine's band stands in, and the pane says the rest.
+      return next(e)
+    }
+  })
+
+  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
+    const table = $.ui.resolve(e)
+    const { Box, Text, Button } = table
+    const Input = 'Input' in table ? table.Input : undefined
+    const els = { Box, Text, Button }
+    try {
+      const kind = await read($, selected)
+      const at = cursorOf(await read($, cursor))
+      const lost = await read($, lostAt)
+      const shot = await read($, snapshot)
+      const tokens = shot?.segments.find(s => s.kind === kind)?.tokens ?? 0
+      const columns = e.props.bodyColumns
+      const body =
+        kind === 'rules'
+          ? await rulesBody($, els, Input, columns, at)
+          : kind === 'large'
+            ? await largeBody($, els, columns, at)
+            : categoriesBody(els, kind, tokens)
+
+      return (
+        <Box flexDirection="column" gap={1}>
+          {lost !== null && <Text color={CLAY}>{`headspace lost track at ${lost}`}</Text>}
+          {tabs($, els, kind)}
+          <Text bold color={COLOURS[kind]}>{`${kind}  ${formatTokens(tokens)}`}</Text>
+          {body}
+        </Box>
+      )
+    } catch {
+      return <Text color={CLAY}>headspace lost track at ui.render</Text>
     }
   })
 }
