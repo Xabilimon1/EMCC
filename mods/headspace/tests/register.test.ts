@@ -1,0 +1,377 @@
+import { describe, expect, test } from 'claude-code/testing'
+import type { Engine } from 'claude-code/testing'
+
+import { cutInstructions } from '../hooks/large'
+import { memoryEntries } from '../hooks/memory'
+import { parseRules } from '../hooks/rules'
+import { probe } from './fixtures/probe'
+import { command, endTurn, seed, session, startTurn, state } from './fixtures/session'
+import type { Row } from './fixtures/session'
+
+const WITH_PROBE = { plugins: [probe] }
+
+const ROWS: Row[] = [
+  { name: 'System prompt', tokens: 3000, kind: 'used' },
+  { name: 'System tools', tokens: 12000, kind: 'used' },
+  { name: 'MCP tools (deferred)', tokens: 9000, kind: 'deferred' },
+  { name: 'Memory files', tokens: 4000, kind: 'used' },
+  { name: 'Messages', tokens: 10000, kind: 'used' },
+  { name: 'Free space', tokens: 138000, kind: 'free' },
+  { name: 'Autocompact buffer', tokens: 33000, kind: 'buffer' },
+]
+
+/** A Read of 30,000 characters and a short answer: with Messages at 10k, the Read is about 9.9k tokens. */
+function conversation() {
+  return [
+    { role: 'user', content: [{ type: 'text', text: 'Read the data.' }] },
+    { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Read', input: { file_path: '/repo/src/data.json' } }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'x'.repeat(30000) }] },
+    { role: 'assistant', content: [{ type: 'text', text: 'It holds the data.' }] },
+  ]
+}
+
+describe('the bar', () => {
+  test('a turn end builds the snapshot from the breakdown and the live conversation', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    it.categories = ROWS
+    it.percent = 15
+    it.api = conversation()
+    await it.clock.advance(5000)
+    await endTurn($)
+    const snapshot = await state($, 'snapshot')
+    expect(snapshot.window).toBe(200_000)
+    expect(snapshot.percent).toBe(15)
+    expect(snapshot.at).toBe(5000)
+    const tokens = Object.fromEntries(snapshot.segments.map((s: { kind: string; tokens: number }) => [s.kind, s.tokens]))
+    expect(tokens.system).toBe(15000)
+    expect(tokens.rules).toBe(4000)
+    expect(tokens.free).toBe(138000)
+    expect(tokens.reserve).toBe(33000)
+    // The Read is nearly all the characters of Messages, so nearly all of it is large.
+    expect(tokens.large).toBeGreaterThan(9900)
+    expect(tokens.large + tokens.conversation).toBe(10000)
+    expect(await state($, 'lostAt')).toBeNull()
+  })
+
+  test('a subagent’s turn end does not refresh', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    it.categories = ROWS
+    await endTurn($, 'agent-1')
+    expect(it.usageCalls).toBe(0)
+    expect(await state($, 'snapshot')).toBeNull()
+  })
+
+  test('a refresh that fails records where and the turn still ends', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    it.categories = ROWS
+    it.api = 'not a conversation' as never
+    expect(await endTurn($)).toEqual({ text: '' })
+    expect(await state($, 'snapshot')).toBeNull()
+    expect(await state($, 'lostAt')).toBe('turn.complete')
+  })
+
+  test('without a breakdown the snapshot stays null', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    it.categories = null
+    await endTurn($)
+    expect(it.usageCalls).toBe(1)
+    expect(await state($, 'snapshot')).toBeNull()
+    expect(await state($, 'lostAt')).toBeNull()
+  })
+})
+
+const PROJECT = '/repo/CLAUDE.md'
+const USER = '/home/me/.claude/CLAUDE.md'
+const PROJECT_TEXT = '# Git\n\n- Commit messages follow Conventional Commits.\n- Never push straight to main.\n\n# Style\n\n- Two spaces.\n'
+const USER_TEXT = '- Answer in English.\n- Never push straight to main.\n'
+const FILES = [
+  { path: USER, kind: 'user', content: USER_TEXT },
+  { path: PROJECT, kind: 'project', content: PROJECT_TEXT },
+]
+const CLAUDE_MD = `Contents of ${USER} (user's private global instructions):\n\n${USER_TEXT}\n\nContents of ${PROJECT} (project instructions):\n\n${PROJECT_TEXT}`
+const BLOCKS = [
+  { name: 'claudeMd', text: CLAUDE_MD },
+  { name: 'currentDate', text: "Today's date is 2026-10-14." },
+]
+
+/** The id of the project rule whose first line holds `words`. */
+function ruleId(words: string, text = PROJECT_TEXT): string {
+  const rule = parseRules(text).rules.find(r => r.lines[0]?.includes(words))
+  if (rule === undefined) {
+    throw new Error(`no rule with ${words}`)
+  }
+
+  return rule.id
+}
+
+/** Core's context, the files behind claudeMd given; `null` leaves them out, as when a hook above rewrote its text. */
+function context($: Engine, files: unknown[] | null = FILES) {
+  return $.prompt.context((files === null ? { blocks: BLOCKS } : { blocks: BLOCKS, instructionFiles: files }) as never)
+}
+
+describe('the rules in the context', () => {
+  test('nothing applied hands core’s blocks on unchanged', WITH_PROBE, async ($, on) => {
+    session(on)
+    const r = await context($)
+    expect(r.blocks).toEqual(BLOCKS)
+    expect(await state($, 'lostAt')).toBeNull()
+  })
+
+  test('a rule turned off leaves the claudeMd block without it, and only it', WITH_PROBE, async ($, on) => {
+    session(on)
+    await seed($, 'applied', [{ source: PROJECT, changes: { [ruleId('Never push')]: [{ type: 'off' }] } }])
+    const r = await context($)
+    const without = PROJECT_TEXT.replace('- Never push straight to main.\n', '')
+    expect(r.blocks).toEqual([{ name: 'claudeMd', text: CLAUDE_MD.replace(PROJECT_TEXT, without) }, BLOCKS[1]])
+    // The user file holds the same words and is left alone.
+    expect(r.blocks[0]?.text).toContain(`${USER_TEXT}`)
+    expect((await state($, 'staleCount')) ?? 0).toBe(0)
+    expect(await state($, 'lostAt')).toBeNull()
+  })
+
+  test('an edit and an added line reach the block', WITH_PROBE, async ($, on) => {
+    session(on)
+    await seed($, 'applied', [
+      { source: PROJECT, changes: { [ruleId('Two spaces')]: [{ type: 'edit', lineIndex: 0, text: '- Four spaces.' }, { type: 'addLine', afterLineIndex: 0, text: '- Tabs never.' }] } },
+    ])
+    const r = await context($)
+    expect(r.blocks[0]?.text).toBe(CLAUDE_MD.replace('- Two spaces.\n', '- Four spaces.\n- Tabs never.\n'))
+  })
+
+  test('a change whose rule changed on disk is dropped and counted stale', WITH_PROBE, async ($, on) => {
+    session(on)
+    const gone = ruleId('Never push', PROJECT_TEXT.replace('straight', 'directly'))
+    const kept = ruleId('Two spaces')
+    await seed($, 'applied', [{ source: PROJECT, changes: { [gone]: [{ type: 'off' }], [kept]: [{ type: 'off' }] } }])
+    const r = await context($)
+    expect(r.blocks[0]?.text).toBe(CLAUDE_MD.replace('- Two spaces.\n', ''))
+    expect(await state($, 'staleCount')).toBe(1)
+    expect(await state($, 'applied')).toEqual([{ source: PROJECT, changes: { [kept]: [{ type: 'off' }] } }])
+    // Counted once: the next read finds nothing stale left.
+    await context($)
+    expect(await state($, 'staleCount')).toBe(1)
+  })
+
+  test('a file whose text the block no longer frames counts all its changes stale and changes nothing', WITH_PROBE, async ($, on) => {
+    session(on)
+    await seed($, 'applied', [{ source: PROJECT, changes: { [ruleId('Never push')]: [{ type: 'off' }], [ruleId('Two spaces')]: [{ type: 'off' }] } }])
+    const r = await $.prompt.context({ blocks: [{ name: 'claudeMd', text: 'something else' }], instructionFiles: FILES } as never)
+    expect(r.blocks).toEqual([{ name: 'claudeMd', text: 'something else' }])
+    expect(await state($, 'staleCount')).toBe(2)
+  })
+
+  test('changes for a file not loaded in this context are kept for later, even when another file’s go stale', WITH_PROBE, async ($, on) => {
+    session(on)
+    const nested = { source: '/repo/src/CLAUDE.md', changes: { 'x#0#00000000': [{ type: 'off' }] } }
+    await seed($, 'applied', [nested])
+    const r = await context($)
+    expect(r.blocks).toEqual(BLOCKS)
+    expect((await state($, 'staleCount')) ?? 0).toBe(0)
+    const gone = ruleId('Never push', PROJECT_TEXT.replace('straight', 'directly'))
+    await seed($, 'applied', [nested, { source: PROJECT, changes: { [gone]: [{ type: 'off' }] } }])
+    await context($)
+    expect(await state($, 'staleCount')).toBe(1)
+    expect(await state($, 'applied')).toEqual([nested])
+  })
+
+  test('session rules add a block of their own, after core’s', WITH_PROBE, async ($, on) => {
+    session(on)
+    await seed($, 'sessionRules', ['Keep the public API unchanged', 'Answer briefly'])
+    const r = await context($)
+    expect(r.blocks).toEqual([
+      ...BLOCKS,
+      { name: 'sessionRules', text: 'Session rules the person set for this session:\n- Keep the public API unchanged\n- Answer briefly' },
+    ])
+  })
+
+  test('a hook that throws hands core’s blocks on unchanged and records where', WITH_PROBE, async ($, on) => {
+    session(on)
+    // Not the contract's shape: rendering it throws.
+    await seed($, 'applied', [{ source: PROJECT, changes: null }])
+    const r = await context($)
+    expect(r.blocks).toEqual(BLOCKS)
+    expect(await state($, 'lostAt')).toBe('prompt.context')
+  })
+
+  test('claudeMd rewritten above headspace: nothing applied, a note left, session rules still added', WITH_PROBE, async ($, on) => {
+    session(on)
+    await seed($, 'applied', [{ source: PROJECT, changes: { [ruleId('Never push')]: [{ type: 'off' }] } }])
+    await seed($, 'sessionRules', ['Answer briefly'])
+    const r = await context($, null)
+    expect(r.blocks.slice(0, 2)).toEqual(BLOCKS)
+    expect(r.blocks[2]?.name).toBe('sessionRules')
+    expect(await state($, 'lostAt')).toBe('prompt.context (claudeMd rewritten above headspace)')
+  })
+})
+
+const MEMORY_SECTION = '# auto memory\n\nHow to use memory: read the index.\n\n- [Kali](kali.md) — VM on the SSD\n- [Numo](numo.md) — the app\n'
+
+describe('the memory section', () => {
+  test('an entry turned off leaves the section, the instructions stay', WITH_PROBE, async ($, on) => {
+    session(on)
+    const kali = memoryEntries(MEMORY_SECTION).find(m => m.title === 'Kali')?.id ?? ''
+    await seed($, 'applied', [{ source: 'memory', changes: { [kali]: [{ type: 'off' }] } }])
+    const r = await $.prompt.section({ name: 'memory', text: MEMORY_SECTION } as never)
+    expect(r.text).toBe(MEMORY_SECTION.replace('- [Kali](kali.md) — VM on the SSD\n', ''))
+  })
+
+  test('nothing off hands core’s section on, and other sections are never touched', WITH_PROBE, async ($, on) => {
+    session(on)
+    expect((await $.prompt.section({ name: 'memory', text: MEMORY_SECTION } as never)).text).toBe(MEMORY_SECTION)
+    const kali = memoryEntries(MEMORY_SECTION).find(m => m.title === 'Kali')?.id ?? ''
+    await seed($, 'applied', [{ source: 'memory', changes: { [kali]: [{ type: 'off' }] } }])
+    expect((await $.prompt.section({ name: 'env_info_simple', text: MEMORY_SECTION } as never)).text).toBe(MEMORY_SECTION)
+  })
+})
+
+describe('apply', () => {
+  test('/headspace apply puts pending in force, rule by rule, and recomputes the context', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    const never = ruleId('Never push')
+    const two = ruleId('Two spaces')
+    const commit = ruleId('Commit messages')
+    await seed($, 'applied', [{ source: PROJECT, changes: { [never]: [{ type: 'off' }], [two]: [{ type: 'off' }] } }])
+    // Two turned back on (an empty list), Commit turned off, Never left as it was.
+    await seed($, 'pending', [{ source: PROJECT, changes: { [two]: [], [commit]: [{ type: 'off' }] } }])
+    await seed($, 'pendingSessionRules', ['Answer briefly'])
+    expect(await command($, 'headspace', 'apply')).toBe('headspace: applied, from the next request')
+    expect(await state($, 'applied')).toEqual([{ source: PROJECT, changes: { [never]: [{ type: 'off' }], [commit]: [{ type: 'off' }] } }])
+    expect(await state($, 'pending')).toEqual([])
+    expect(await state($, 'sessionRules')).toEqual(['Answer briefly'])
+    expect(await state($, 'pendingSessionRules')).toBeNull()
+    expect(it.invalidated).toContain('prompt.context')
+    expect(it.invalidated).toContain('prompt.section')
+    const r = await context($)
+    expect(r.blocks[0]?.text).toBe(CLAUDE_MD.replace('- Commit messages follow Conventional Commits.\n- Never push straight to main.\n', ''))
+    expect(r.blocks.at(-1)).toEqual({ name: 'sessionRules', text: 'Session rules the person set for this session:\n- Answer briefly' })
+  })
+
+  test('/headspace apply with nothing waiting says so', WITH_PROBE, async ($, on) => {
+    session(on)
+    expect(await command($, 'headspace', 'apply')).toBe('headspace: nothing to apply')
+  })
+})
+
+describe('the pane’s command', () => {
+  test('a session start registers /headspace', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+    expect(it.registered).toEqual([{ name: 'headspace', description: 'Show what Claude carries and take pieces out' }])
+  })
+
+  test('/headspace opens the pane on rules and refreshes the bar', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    it.categories = ROWS
+    expect(await command($, 'headspace')).toBe('')
+    expect(it.opened).toEqual([{ id: 'headspace', title: 'headspace', closeOnEscape: true, focus: true }])
+    expect(await state($, 'selected')).toBe('rules')
+    expect(it.usageCalls).toBe(1)
+    expect(await state($, 'snapshot')).not.toBeNull()
+  })
+
+  test('/headspace large opens it on the large results', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    await command($, 'headspace', 'large')
+    expect(it.opened.length).toBe(1)
+    expect(await state($, 'selected')).toBe('large')
+  })
+
+  test('an unknown word opens nothing and says what is understood', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    expect(await command($, 'headspace', 'everything')).toContain('/headspace [rules|large')
+    expect(it.opened).toEqual([])
+  })
+})
+
+const MARK = { id: 't1', label: 'Read src/data.json (9.9k tokens)' }
+
+describe('removing large results', () => {
+  test('a refresh drops the marks whose result is no longer in the conversation', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    it.categories = ROWS
+    it.api = conversation()
+    await seed($, 'marks', [MARK, { id: 'gone', label: 'Bash ls (3k tokens)' }])
+    await endTurn($)
+    expect(await state($, 'marks')).toEqual([MARK])
+  })
+
+  test('/headspace cut compacts with headspace-cut instructions once the command is answered, then clears the marks', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    it.categories = ROWS
+    it.api = conversation()
+    await command($, 'headspace-cut-ready', 'on')
+    await seed($, 'marks', [MARK])
+    // Never under the command's own hook (the host refuses a compaction there): only once the clock moves on.
+    expect((await $.command.run({ command: 'headspace', args: 'cut' } as never)).text).toBe('removing 1 result')
+    expect(it.compactions).toEqual([])
+    await it.clock.advance(1)
+    expect(it.compactions).toEqual([cutInstructions([MARK])])
+    expect(it.compactions[0]?.startsWith('headspace-cut:')).toBe(true)
+    expect(await state($, 'marks')).toEqual([])
+    expect(await state($, 'isCutting')).toBe(false)
+    expect(await state($, 'lostAt')).toBeNull()
+    // The bar is read again after the cut.
+    expect(it.usageCalls).toBe(1)
+  })
+
+  for (const ready of ['never written', 'off']) {
+    test(`refused when headspace-cut is not ready (${ready})`, WITH_PROBE, async ($, on) => {
+      const it = session(on)
+      if (ready === 'off') {
+        await command($, 'headspace-cut-ready', 'off')
+      }
+      await seed($, 'marks', [MARK])
+      expect(await command($, 'headspace', 'cut')).toBe('headspace: install headspace-cut to remove results')
+      await it.clock.advance(1)
+      expect(it.compactions).toEqual([])
+    })
+  }
+
+  test('refused while a turn runs, offered again once it ends', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    it.categories = ROWS
+    it.api = conversation()
+    await command($, 'headspace-cut-ready', 'on')
+    await seed($, 'marks', [MARK])
+    await startTurn($)
+    expect(await command($, 'headspace', 'cut')).toBe('headspace: Claude is working: remove results between turns')
+    await it.clock.advance(1)
+    expect(it.compactions).toEqual([])
+    await endTurn($)
+    expect(await command($, 'headspace', 'cut')).toBe('removing 1 result')
+  })
+
+  test('refused with nothing marked', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    await command($, 'headspace-cut-ready', 'on')
+    expect(await command($, 'headspace', 'cut')).toBe('headspace: no results marked')
+    await it.clock.advance(1)
+    expect(it.compactions).toEqual([])
+  })
+
+  test('refused while a cut is in flight', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    await command($, 'headspace-cut-ready', 'on')
+    await seed($, 'marks', [MARK])
+    await seed($, 'isCutting', true)
+    expect(await command($, 'headspace', 'cut')).toBe('headspace: a removal is already running')
+    await it.clock.advance(1)
+    expect(it.compactions).toEqual([])
+  })
+
+  test('a skip keeps the marks and shows the reason; it is not a crash', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    it.categories = ROWS
+    it.api = conversation()
+    it.compactAnswer = { skip: 'headspace-cut: 1 marked result is no longer in the conversation' }
+    await command($, 'headspace-cut-ready', 'on')
+    await seed($, 'marks', [MARK])
+    expect(await command($, 'headspace', 'cut')).toBe('removing 1 result')
+    await it.clock.advance(1)
+    expect(it.compactions.length).toBe(1)
+    expect(await state($, 'marks')).toEqual([MARK])
+    expect(it.toasts).toEqual(['headspace-cut: 1 marked result is no longer in the conversation'])
+    expect(await state($, 'isCutting')).toBe(false)
+    expect(await state($, 'lostAt')).toBeNull()
+  })
+})
