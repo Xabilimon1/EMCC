@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'claude-code/testing'
-import type { Engine } from 'claude-code/testing'
+import type { Engine, Plugin } from 'claude-code/testing'
 
 import { parseRules } from '../hooks/rules'
 import { probe } from './fixtures/probe'
@@ -111,6 +111,63 @@ function shown(element: unknown): string {
   return label + (children ?? []).map(shown).join('')
 }
 
+/** The engine beneath headspace with nothing of its own to show: an empty band. */
+function quietBand(on: Parameters<typeof session>[0]): void {
+  on('ui.render', ($, e) => {
+    const { Box } = $.ui.resolve(e)
+
+    return <Box />
+  })
+}
+
+/** Another plugin drawing the band beneath headspace, as emcc-core or witness do; it says the rows it was given. */
+const otherBand: Plugin = {
+  name: 'other-band',
+  tier: 'builtin',
+  register(on) {
+    on('ui.render', { component: 'AbovePrompt' }, async ($, e) => {
+      const { Text } = $.ui.resolve(e)
+
+      return <Text>{`other band in ${e.props.maxRows} rows`}</Text>
+    })
+  },
+}
+
+/** The element keyed `key` in a drawn tree, as drawn: its `hover` included, which a found element leaves out. */
+function keyed(tree: unknown, key: string): { props?: Record<string, unknown>; hover?: Record<string, unknown>; children?: unknown[] } | undefined {
+  if (tree === null || typeof tree !== 'object') {
+    return undefined
+  }
+  const node = tree as { props?: Record<string, unknown>; children?: unknown[] }
+  if (node.props?.key === key) {
+    return node
+  }
+  for (const child of node.children ?? []) {
+    const found = keyed(child, key)
+    if (found !== undefined) {
+      return found
+    }
+  }
+
+  return undefined
+}
+
+/** The keys of the Buttons drawn where they show at rest: under no Box drawn `display: none`. */
+function visibleButtons(tree: unknown): string[] {
+  if (tree === null || typeof tree !== 'object') {
+    return []
+  }
+  const { type, props, children } = tree as { type?: string; props?: { key?: string; display?: string }; children?: unknown[] }
+  if (type === 'Button') {
+    return [props?.key ?? '']
+  }
+  if (props?.display === 'none') {
+    return []
+  }
+
+  return (children ?? []).flatMap(visibleButtons)
+}
+
 describe('the band', () => {
   test('without a snapshot it passes to the engine', WITH_PROBE, async ($, on) => {
     session(on)
@@ -124,11 +181,10 @@ describe('the band', () => {
 
   test('a full snapshot draws the six kinds in their colours, then the percentage', WITH_PROBE, async ($, on) => {
     const it = session(on)
-    engineBand(on)
+    quietBand(on)
     await filled($, it)
     for (const surface of SURFACES) {
       const ui = await band($, surface)
-      expect(await ui.find({ type: 'Text', text: /engine band/ })).toBeUndefined()
       const cells = (await ui.findAll({ type: 'Text', text: /^[█░]+$/ })).map(one => [one.text[0], one.props.color, one.props.dimColor === true])
       expect(cells).toEqual([
         ['█', STONE, false],
@@ -138,16 +194,42 @@ describe('the band', () => {
         ['█', LIGHT, true],
         ['░', STONE, false],
       ])
-      expect(await ui.find({ type: 'Text', text: /^31%$/ })).toBeDefined()
+      expect((await ui.find({ key: 'label-percent' }))?.text).toBe('31%')
       for (const kind of ['system', 'rules', 'conversation', 'large', 'free', 'reserve']) {
         expect(await ui.find({ key: `seg-${kind}` })).toBeDefined()
       }
+      // Nothing beneath to show: the band is headspace's one row.
+      expect((await ui.drawn()).type).toBe('Box')
+      expect(keyed(await ui.drawn(), 'label-percent')).toBeDefined()
+      expect((await ui.drawn() as { props?: { flexDirection?: string } }).props?.flexDirection).toBeUndefined()
       await ui.unmount()
     }
   })
 
+  test('another plugin’s band beneath is drawn under headspace’s row, never swallowed', { plugins: [probe, otherBand] }, async ($, on) => {
+    const it = session(on)
+    await filled($, it)
+    for (const surface of SURFACES) {
+      const ui = await band($, surface)
+      const tree = (await ui.drawn()) as { props?: { flexDirection?: string }; children?: unknown[] }
+      expect(tree.props?.flexDirection).toBe('column')
+      // headspace's row first, then the band beneath, which was given the rows headspace's row leaves.
+      expect(shown(tree.children?.[0])).toContain('31%')
+      expect(shown(tree.children?.[1])).toBe('other band in 2 rows')
+      await ui.unmount()
+    }
+  })
+
+  test('with nothing to show, the band beneath is handed on unchanged', { plugins: [probe, otherBand] }, async ($, on) => {
+    session(on)
+    const ui = await band($)
+    expect(await ui.drawn()).toMatchObject({ type: 'Text', children: ['other band in 3 rows'] })
+    await ui.unmount()
+  })
+
   test('a kind of 1 token still draws one cell', WITH_PROBE, async ($, on) => {
     const it = session(on)
+    quietBand(on)
     it.categories = ROWS.map(row => (row.name === 'Memory files' ? { ...row, tokens: 1 } : row))
     await endTurn($)
     const ui = await band($)
@@ -156,8 +238,9 @@ describe('the band', () => {
     await ui.unmount()
   })
 
-  test('each segment holds its hover card, with what can be done there', WITH_PROBE, async ($, on) => {
+  test('the pointer on a segment shows its card in the band’s own row, over the labels', WITH_PROBE, async ($, on) => {
     const it = session(on)
+    quietBand(on)
     await filled($, it)
     for (const surface of SURFACES) {
       const ui = await band($, surface)
@@ -170,26 +253,31 @@ describe('the band', () => {
         reserve: 'view only',
       }
       for (const [kind, action] of Object.entries(actions)) {
-        const segment = await ui.find({ key: `seg-${kind}` })
-        const text = shown(segment)
+        const card = await ui.find({ key: `card-${kind}` })
+        // In the row (top 0, never above it: the band clips what leaves it), hidden until its segment is hovered.
+        expect(card?.props).toMatchObject({ position: 'absolute', top: 0, display: 'none' })
+        expect(keyed(await ui.drawn(), `card-${kind}`)?.hover).toEqual({ display: 'flex', scope: `headspace-${kind}` })
+        const text = shown(card)
+        expect(text.startsWith(`${kind} `)).toBe(true)
         expect(text).toContain(action)
-        expect(text).toContain(kind)
         const other = action === 'view only' ? 'click to view and remove' : 'view only'
         expect(text.includes(other)).toBe(false)
+        // The segment's cells heat the same group.
+        const cells = keyed(await ui.drawn(), `seg-${kind}`)?.children?.[0] as { hover?: { scope?: string } }
+        expect(cells.hover?.scope).toBe(`headspace-${kind}`)
       }
-      const card = (await ui.find({ key: 'seg-rules' }))?.children.find(
-        child => typeof child === 'object' && (child as { props?: { position?: string } }).props?.position === 'absolute' && shown(child).includes('rules'),
-      ) as { props: Record<string, unknown>; hover?: unknown } | undefined
-      expect(card?.props).toMatchObject({ position: 'absolute', top: -3, display: 'none', borderStyle: 'round' })
-      expect(card?.hover).toEqual({ display: 'flex' })
-      expect(shown(await ui.find({ key: 'seg-rules' }))).toContain('4k')
-      expect(shown(await ui.find({ key: 'seg-large' }))).toContain('1 result')
+      // One line, as wide as the labels it covers, so none shows through.
+      const rules = shown(await ui.find({ key: 'card-rules' }))
+      expect(rules.trimEnd()).toBe('rules 4k  3 rules  click to view and remove')
+      expect(rules.length).toBe((await ui.find({ key: 'card-rules' }))?.props.width)
+      expect(shown(await ui.find({ key: 'card-large' }))).toContain('1 result')
       await ui.unmount()
     }
   })
 
   test('pressing the rules segment opens the pane on rules', WITH_PROBE, async ($, on) => {
     const it = session(on)
+    quietBand(on)
     await filled($, it)
     await command($, 'headspace', 'large')
     expect(await state($, 'selected')).toBe('large')
@@ -202,8 +290,30 @@ describe('the band', () => {
     await ui.unmount()
   })
 
+  test('each label after the bar is a Button shown at rest, the keyboard’s way into the pane on its kind', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    quietBand(on)
+    await filled($, it)
+    await seed($, 'marks', [{ id: 't1', label: 'Read src/data.json (9.9k tokens)' }])
+    const ui = await band($)
+    // ctrl+x tab reaches the Buttons the band shows; the ones under a hover-only Box are the pointer's.
+    expect(visibleButtons(await ui.drawn())).toEqual(['label-percent', 'label-rules', 'label-large', 'label-marked'])
+    for (const [key, kind] of [['label-large', 'large'], ['label-rules', 'rules'], ['label-marked', 'large'], ['label-percent', 'rules']]) {
+      await command($, 'headspace', kind === 'rules' ? 'free' : 'system')
+      await ui.press({ key: key as string })
+      await it.clock.settle()
+      expect(await state($, 'selected')).toBe(kind)
+    }
+    await ui.unmount()
+    // A bare band keeps the percentage, which opens the pane on rules.
+    const bare = await band($, 'terminal', 50)
+    expect(visibleButtons(await bare.drawn())).toEqual(['label-percent'])
+    await bare.unmount()
+  })
+
   test('labels and counts follow the bar; the stale line shows with staleCount', WITH_PROBE, async ($, on) => {
     const it = session(on)
+    quietBand(on)
     await filled($, it)
     const changes = {
       [ruleId('Never push')]: [{ type: 'off' }],
@@ -215,36 +325,40 @@ describe('the band', () => {
     await context($)
     expect(await state($, 'staleCount')).toBe(1)
     const ui = await band($)
-    expect((await ui.find({ type: 'Text', text: /^rules \d/ }))?.text).toBe('rules 4k')
-    expect((await ui.find({ type: 'Text', text: /off$/ }))?.text).toBe('1 off')
-    expect((await ui.find({ type: 'Text', text: /^large \d/ }))?.text).toMatch(/^large (9\.\d|10)k$/)
+    expect((await ui.find({ key: 'label-rules' }))?.text).toBe('rules 4k')
+    expect((await ui.find({ key: 'label-off' }))?.text).toBe('1 off')
+    expect((await ui.find({ key: 'label-large' }))?.text).toMatch(/^large (9\.\d|10)k$/)
     expect((await ui.find({ type: 'Text', text: /no longer appl/ }))?.text).toBe('1 change no longer applies')
-    expect(await ui.find({ type: 'Text', text: /·/ })).toBeUndefined()
+    expect(await ui.find({ text: /·/ })).toBeUndefined()
     await ui.unmount()
   })
 
   test('marks count on the bar', WITH_PROBE, async ($, on) => {
     const it = session(on)
+    quietBand(on)
     await filled($, it)
     await seed($, 'marks', [{ id: 't1', label: 'Read src/data.json (9.9k tokens)' }])
     const ui = await band($)
-    expect((await ui.find({ type: 'Text', text: /marked$/ }))?.text).toBe('1 marked')
+    expect((await ui.find({ key: 'label-marked' }))?.text).toBe('1 marked')
     await ui.unmount()
   })
 
   test('a narrow band drops the labels first, then the counts; the percentage stays', WITH_PROBE, async ($, on) => {
     const it = session(on)
+    quietBand(on)
     await filled($, it)
     await seed($, 'marks', [{ id: 't1', label: 'Read src/data.json (9.9k tokens)' }])
     const counts = await band($, 'terminal', 80)
-    expect(await counts.find({ type: 'Text', text: /^rules \d/ })).toBeUndefined()
-    expect((await counts.find({ type: 'Text', text: /marked$/ }))?.text).toBe('1 marked')
-    expect(await counts.find({ type: 'Text', text: /^31%$/ })).toBeDefined()
+    expect(await counts.find({ key: 'label-rules' })).toBeUndefined()
+    expect((await counts.find({ key: 'label-marked' }))?.text).toBe('1 marked')
+    expect((await counts.find({ key: 'label-percent' }))?.text).toBe('31%')
     await counts.unmount()
     const bare = await band($, 'terminal', 50)
-    expect(await bare.find({ type: 'Text', text: /marked$/ })).toBeUndefined()
-    expect(await bare.find({ type: 'Text', text: /^31%$/ })).toBeDefined()
+    expect(await bare.find({ key: 'label-marked' })).toBeUndefined()
+    expect((await bare.find({ key: 'label-percent' }))?.text).toBe('31%')
     expect((await bare.findAll({ type: 'Text', text: /^[█░]+$/ })).length).toBe(6)
+    // No room beside a bare bar for a card.
+    expect(await bare.find({ key: 'card-rules' })).toBeUndefined()
     await bare.unmount()
   })
 
@@ -254,6 +368,7 @@ describe('the band', () => {
     await filled($, it)
     const ui = await $.ui.mount({ plugin: 'headspace', surface: 'terminal', ...BAND, props: { ...BAND.props, hasSurvey: true } } as never)
     expect(await ui.find({ type: 'Text', text: /engine band/ })).toBeDefined()
+    expect(await ui.find({ key: 'label-percent' })).toBeUndefined()
     await ui.unmount()
   })
 })
@@ -294,10 +409,22 @@ describe('the pane', () => {
       expect((await ui.find({ type: 'Button', text: /Never push straight to main/ }))?.props.plain).toBe(true)
       expect(await ui.find({ type: 'Text', text: /^session rules/ })).toBeDefined()
       expect((await ui.find({ key: 'apply-rules' }))?.text).toBe('apply')
-      // Everything used: system 15k, rules 4k, the conversation and large 10k; never free space or the reserve.
-      expect((await ui.find({ type: 'Text', text: /of cache$/ }))?.text).toBe('rewrites ~29k of cache')
+      // From the first user message on: rules 4k, the conversation and large 10k. The tools and the
+      // system prompt come before it and stay cached; free space and the reserve are not sent.
+      expect((await ui.find({ type: 'Text', text: /of cache$/ }))?.text).toBe('rewrites ~14k of cache')
       await ui.unmount()
     }
+  })
+
+  test('a waiting auto-memory change rewrites the system prompt too', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    await filled($, it)
+    await command($, 'headspace')
+    await seed($, 'pending', [{ source: 'memory', changes: { 'Kali#0#00000000': [{ type: 'off' }] } }])
+    const ui = await pane($)
+    // The memory index rides in the system prompt: system 15k on top of the 14k after it.
+    expect((await ui.find({ type: 'Text', text: /of cache$/ }))?.text).toBe('rewrites ~29k of cache')
+    await ui.unmount()
   })
 
   test('turning a rule off and pressing apply changes the next context', WITH_PROBE, async ($, on) => {

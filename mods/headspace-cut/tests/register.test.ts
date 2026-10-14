@@ -77,6 +77,16 @@ describe('answering a compaction', () => {
     expect(ran).toEqual([])
   })
 
+  test('headspace-cut instructions that mark nothing answer a skip, never a compaction that changes nothing', async ($, on) => {
+    const ran = core(on)
+    for (const trigger of ['plugin', 'manual']) {
+      const result = await compact($, trigger, 'headspace-cut:{"marks":[]}')
+      expect(result.messages).toBeUndefined()
+      expect(result.skip).toBe('headspace-cut: nothing marked')
+    }
+    expect(ran).toEqual([])
+  })
+
   test('headspace-cut instructions that do not parse answer a skip, never a summary', async ($, on) => {
     const ran = core(on)
     for (const trigger of ['plugin', 'manual']) {

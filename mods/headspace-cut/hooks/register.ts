@@ -32,6 +32,10 @@ export const register: Register = on => {
     if (request === null) {
       return { skip: `headspace-cut: the instructions after ${CUT_PREFIX} do not parse` }
     }
+    if (request.marks.length === 0) {
+      // Every message as it was would still install a compaction boundary that changes nothing.
+      return { skip: 'headspace-cut: nothing marked' }
+    }
     try {
       const { messages, missing } = cutMessages(e.messages, request)
       if (missing.length > 0) {

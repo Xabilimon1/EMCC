@@ -11,7 +11,7 @@ import type {
   RenderElement,
 } from 'claude-code'
 
-import type { HeadspaceFileChanges, HeadspaceKind, HeadspaceRuleChange } from '../types'
+import type { HeadspaceFileChanges, HeadspaceKind, HeadspaceRuleChange, HeadspaceSnapshot } from '../types'
 import { COLOURS, ORDER, fallback, formatTokens, toSegments, widths } from './bar'
 import type { Category } from './bar'
 import { cacheCost, cutInstructions, label, largeResults } from './large'
@@ -193,6 +193,8 @@ async function applyRules($: EngineInterface): Promise<number> {
     await update($, sessionRules, () => rules)
     await update($, pendingSessionRules, () => null)
   }
+  // The person has seen the bar's stale line and chosen again: it starts over.
+  await update($, staleCount, () => 0)
   $.ui.invalidate('prompt.context')
   $.ui.invalidate('prompt.section')
 
@@ -208,19 +210,32 @@ function countChanges(changes: Record<string, HeadspaceRuleChange[]>, ids: reado
  * The `claudeMd` block with the applied changes of each file it frames: the
  * file's loaded text replaced, once, by the text rendered without its rules
  * turned off. Changes whose rule is gone, or whose file text is not found in
- * the block, are dropped from applied and counted stale.
+ * the block, are dropped from applied and counted stale. Changes a save wrote
+ * into the file leave quietly once the engine hands that file's new text.
  */
 async function rewriteClaudeMd($: EngineInterface, block: PromptContextBlock, files: readonly InstructionFile[]): Promise<PromptContextBlock> {
   const inForce = (await read($, applied)).filter(f => f.source !== MEMORY)
   let text = block.text
   let stale = 0
+  let isDropped = false
   const kept: HeadspaceFileChanges[] = []
-  for (const entry of inForce) {
+  for (const original of inForce) {
+    let entry = original
     const file = files.find(f => f.path === entry.source)
     if (file === undefined) {
       // Not loaded in this context (a nested file not read yet): kept for when it is.
       kept.push(entry)
       continue
+    }
+    const saved = savedFrom.get(entry.source)
+    if (saved !== undefined && file.content !== saved.loaded) {
+      // The engine read the saved file: those changes are in its text now, never stale.
+      savedFrom.delete(entry.source)
+      entry = { source: entry.source, changes: Object.fromEntries(Object.entries(entry.changes).filter(([id]) => !saved.ids.includes(id))) }
+      isDropped = true
+      if (Object.keys(entry.changes).length === 0) {
+        continue
+      }
     }
     const { text: rendered, unknown } = renderRules(parseRules(file.content), entry.changes)
     const at = text.indexOf(file.content)
@@ -235,9 +250,11 @@ async function rewriteClaudeMd($: EngineInterface, block: PromptContextBlock, fi
       kept.push({ source: entry.source, changes })
     }
   }
-  if (stale > 0) {
+  if (stale > 0 || isDropped) {
     const memory = (await read($, applied)).filter(f => f.source === MEMORY)
     await update($, applied, () => [...kept, ...memory])
+  }
+  if (stale > 0) {
     await update($, staleCount, count => count + stale)
   }
 
@@ -253,6 +270,14 @@ const SESSION_HEADING = '## Session rules'
 const DIFF_LINES = 30
 
 type Backup = { at: number; text: string }
+
+/**
+ * Per file saved this session: the text the engine held for it when the save
+ * went through, and the rules that save wrote. The engine may go on handing
+ * that text until it reads the file again (a compaction, /clear), so those
+ * changes stay in force until its text differs, then leave applied quietly.
+ */
+const savedFrom = new Map<string, { loaded: string; ids: string[] }>()
 
 /** The last save's outcome per source (a path, or SESSION_RULES), shown in the pane under its group. */
 const saveNotices = new Map<string, string>()
@@ -320,17 +345,25 @@ async function writeKeepingBackup($: EngineInterface, path: string, disk: string
  * Writes a file's applied changes into the file on disk, after showing the
  * diff and asking. Rule ids are worked out on the disk text: a change whose
  * rule reads otherwise there is not saved, stays in force, and is counted.
- * The saved changes leave applied: they are in the file now.
+ * The saved changes leave applied once the engine reads the saved file
+ * (savedFrom); until then they keep the rule out of what Claude reads.
  */
 async function save($: EngineInterface, source: string): Promise<string> {
   try {
+    // An organization's file: the pane offers no save, and a drawing older than the engine's last read is refused here.
+    if (lastFiles.find(f => f.path === source)?.kind === 'managed') {
+      return notify($, source, 'managed files are read-only')
+    }
     const entry = (await read($, applied)).find(f => f.source === source)
     if (entry === undefined) {
       return notify($, source, 'nothing applied to save')
     }
+    // Changes an earlier save wrote are in the file already: only the others are saved now.
+    const written = savedFrom.get(source)?.ids ?? []
+    const changes = Object.fromEntries(Object.entries(entry.changes).filter(([id]) => !written.includes(id)))
     const disk = await $.fs.read(source)
-    const { text, unknown } = renderRules(parseRules(disk), entry.changes)
-    const lost = countChanges(entry.changes, unknown)
+    const { text, unknown } = renderRules(parseRules(disk), changes)
+    const lost = countChanges(changes, unknown)
     const lostLine = lost > 0 ? `${count(lost, 'change')} cannot be saved: the rule differs on disk` : null
     if (text === disk) {
       return notify($, source, lostLine ?? 'nothing to save')
@@ -342,11 +375,19 @@ async function save($: EngineInterface, source: string): Promise<string> {
     if (refusal !== null) {
       return notify($, source, refusal)
     }
-    await update($, applied, files =>
-      files
-        .map(f => (f.source === source ? { source, changes: Object.fromEntries(Object.entries(f.changes).filter(([id]) => unknown.includes(id))) } : f))
-        .filter(f => Object.keys(f.changes).length > 0),
-    )
+    const saved = Object.keys(changes).filter(id => !unknown.includes(id))
+    const loaded = lastFiles.find(f => f.path === source)?.content
+    if (loaded === undefined) {
+      // The engine has not read this file into the context: it will read the saved text, so the changes leave now.
+      await update($, applied, files =>
+        files
+          .map(f => (f.source === source ? { source, changes: Object.fromEntries(Object.entries(f.changes).filter(([id]) => !saved.includes(id))) } : f))
+          .filter(f => Object.keys(f.changes).length > 0),
+      )
+    } else {
+      // Until the engine reads the file again it hands the old text: the saved changes stay in force over it.
+      savedFrom.set(source, { loaded, ids: [...written, ...saved] })
+    }
     $.ui.invalidate('prompt.context')
 
     return notify($, source, lostLine === null ? `saved to ${source}` : `saved to ${source}; ${lostLine}`)
@@ -355,11 +396,15 @@ async function save($: EngineInterface, source: string): Promise<string> {
   }
 }
 
-/** Puts back the file as it was before its last save, after showing the diff and asking; that backup is used up. */
+/**
+ * Puts back the file as it was before its last save, after showing the diff
+ * and asking. Written as a save is: refused when the file changed while the
+ * question was open, and what it writes over kept first as the newest backup.
+ * The backup it restored is used up only once the write went through.
+ */
 async function undoSave($: EngineInterface, source: string): Promise<string> {
   try {
-    const saves = await backupsOf($, source)
-    const last = saves.at(-1)
+    const last = (await backupsOf($, source)).at(-1)
     if (last === undefined) {
       return notify($, source, 'no save to undo')
     }
@@ -367,13 +412,15 @@ async function undoSave($: EngineInterface, source: string): Promise<string> {
     if (!(await confirm($, `${diffText(current, last.text)}\n\nRestore ${source} to how it was before the last save?`, 'Restore'))) {
       return notify($, source, 'nothing written')
     }
-    await $.fs.write(source, last.text)
-    const rest = saves.slice(0, -1)
-    if (rest.length === 0) {
-      await $.store.delete(backupKey(source))
-    } else {
-      await $.store.set(backupKey(source), { saves: rest })
+    const refusal = await writeKeepingBackup($, source, current, last.text)
+    if (refusal !== null) {
+      return notify($, source, refusal)
     }
+    // The restored backup sits just under the one this write kept.
+    const saves = await backupsOf($, source)
+    await $.store.set(backupKey(source), { saves: saves.filter((_, at) => at !== saves.length - 2) })
+    // The file is as it was before the save; the changes that save wrote stay in force for this session, as before it.
+    savedFrom.delete(source)
     $.ui.invalidate('prompt.context')
 
     return notify($, source, `restored ${source}`)
@@ -666,25 +713,51 @@ function pieces(kind: HeadspaceKind, rules: readonly string[]): string | null {
   }
 }
 
-/** One segment of the bar: its cells, the same cells as a button under the pointer, and its card. */
-function segment($: EngineInterface, { Box, Text, Button }: Els, kind: HeadspaceKind, width: number, tokens: number, rules: readonly string[]): RenderElement {
+/**
+ * The hover group a kind's segment and its card share: the pointer on the
+ * segment shows the card in the labels' place, in the band's own row (an
+ * absolute Box is clipped to the band, so a card above a one-row band would
+ * never show).
+ */
+function scopeOf(kind: HeadspaceKind): string {
+  return `headspace-${kind}`
+}
+
+/** One segment of the bar: its cells, and the same cells as a button under the pointer. */
+function segment($: EngineInterface, { Box, Text, Button }: Els, kind: HeadspaceKind, width: number): RenderElement {
   const run = (kind === 'reserve' ? '░' : '█').repeat(width)
-  const what = pieces(kind, rules)
-  const isRemovable = kind === 'rules' || kind === 'large'
+  const hover = { scope: scopeOf(kind), color: LIGHTER[kind] }
 
   return (
     <Box key={`seg-${kind}`} flexShrink={0}>
-      <Text color={COLOURS[kind]} dimColor={kind === 'free' ? true : undefined}>
+      <Text color={COLOURS[kind]} dimColor={kind === 'free' ? true : undefined} hover={hover}>
         {run}
       </Text>
       <Box position="absolute" top={0} left={0} display="none" hover={{ display: 'flex' }}>
-        <Button key={`open-${kind}`} plain label={run} hover={{ color: LIGHTER[kind] }} onPress={() => press($, 'ui.press', () => openOn($, kind))} />
+        <Button key={`open-${kind}`} plain label={run} hover={hover} onPress={() => press($, 'ui.press', () => openOn($, kind))} />
       </Box>
-      <Box position="absolute" top={-3} display="none" hover={{ display: 'flex' }} borderStyle="round" borderColor={COLOURS[kind]} flexDirection="column" paddingX={1}>
-        <Text bold>{`${kind}  ${formatTokens(tokens)}`}</Text>
-        {what !== null && <Text>{what}</Text>}
-        <Text color={STONE}>{isRemovable ? 'click to view and remove' : 'view only'}</Text>
-      </Box>
+    </Box>
+  )
+}
+
+/** What a kind's card says: `rules 4k  12 rules  click to view and remove`. */
+function cardText(kind: HeadspaceKind, tokens: number, rules: readonly string[]): string {
+  const what = pieces(kind, rules)
+  const action = kind === 'rules' || kind === 'large' ? 'click to view and remove' : 'view only'
+
+  return [`${kind} ${formatTokens(tokens)}`, what, action].filter((part): part is string => part !== null).join('  ')
+}
+
+/**
+ * A kind's card, drawn over the labels after the bar while the pointer is on
+ * its segment: one line, padded to the labels' width so none shows through.
+ */
+function card({ Box, Text }: Els, kind: HeadspaceKind, text: string, room: number): RenderElement {
+  return (
+    <Box key={`card-${kind}`} position="absolute" top={0} left={0} width={room} display="none" hover={{ display: 'flex', scope: scopeOf(kind) }}>
+      <Text color={COLOURS[kind]} wrap="truncate-end">
+        {cut(text, room).padEnd(room)}
+      </Text>
     </Box>
   )
 }
@@ -729,7 +802,11 @@ async function rulesBody($: EngineInterface, { Box, Text, Button }: Els, Input: 
   const rules = (await read($, pendingSessionRules)) ?? (await read($, sessionRules))
   const groups = ruleGroups()
   const waitingCount = waiting.reduce((sum, f) => sum + Object.keys(f.changes).length, 0) + ((await read($, pendingSessionRules)) === null ? 0 : 1)
-  const used = (shot?.segments ?? []).filter(s => s.kind !== 'free' && s.kind !== 'reserve').reduce((sum, s) => sum + s.tokens, 0)
+  // What a changed context costs: everything from the first user message on, where claudeMd and the
+  // session rules sit. The tools and the system prompt come before it and stay cached, save when an
+  // auto-memory entry changes: the memory index is part of the system prompt.
+  const rewritten: HeadspaceKind[] = waiting.some(f => f.source === MEMORY) ? ['system', 'rules', 'conversation', 'large'] : ['rules', 'conversation', 'large']
+  const used = (shot?.segments ?? []).filter(s => rewritten.includes(s.kind)).reduce((sum, s) => sum + s.tokens, 0)
   /** Whether each group's file has a save to undo: only files headspace may write. */
   const undoable = await Promise.all(groups.map(async g => !g.isManaged && !g.isMemory && (await backupsOf($, g.source).catch(() => [])).length > 0))
   const sessionNotice = saveNotices.get(SESSION_RULES)
@@ -900,6 +977,78 @@ function categoriesBody({ Box, Text }: Els, kind: HeadspaceKind, tokens: number)
   )
 }
 
+/** One thing after the bar: a label that opens the pane on its kind (reachable with ctrl+x tab), or a line to read. */
+type Item = { key: string; text: string; opens: HeadspaceKind | null }
+
+/** Whether the band beneath drew nothing: no tree, or a Box or Text holding no text and no control. */
+function isBlank(tree: RenderElement | null | undefined): boolean {
+  if (tree === null || tree === undefined) {
+    return true
+  }
+  if (tree.type !== 'Box' && tree.type !== 'Text') {
+    return false
+  }
+
+  return (tree.children ?? []).every(child => (typeof child === 'string' ? child === '' : typeof child === 'object' && child !== null && 'type' in child && isBlank(child as RenderElement)))
+}
+
+/** The cards need at least this many cells beside the bar to say anything. */
+const CARD_MIN = 12
+
+/**
+ * The band's row: the bar, the percentage, then per fallback the labels and
+ * counts, each label a plain Button that opens the pane on its kind (the
+ * keyboard's way in: ctrl+x tab, the arrows, Enter). The percentage opens it
+ * on rules, so even a bare band has one. Under the pointer, a segment's card
+ * takes the labels' place.
+ */
+async function bandRow($: EngineInterface, els: Els, shot: HeadspaceSnapshot, bodyColumns: number): Promise<RenderElement> {
+  const { Box, Text, Button } = els
+  const mode = fallback(bodyColumns)
+  const columns = Math.max(BAR_MIN, Math.min(BAR_MAX, bodyColumns - BESIDE[mode]))
+  const tokens = Object.fromEntries(shot.segments.map(s => [s.kind, s.tokens])) as Partial<Record<HeadspaceKind, number>>
+  const rules = await read($, sessionRules)
+  const off = offCount(await read($, applied))
+  const marked = (await read($, marks)).length
+  const stale = await read($, staleCount)
+  const cells = widths(shot.segments, shot.window, columns).filter(cell => cell.width > 0)
+  const percent = `${Math.round(shot.percent)}%`
+  const counts: (Item | null)[] = [
+    off > 0 ? { key: 'label-off', text: `${off} off`, opens: 'rules' } : null,
+    marked > 0 ? { key: 'label-marked', text: `${marked} marked`, opens: 'large' } : null,
+    stale > 0 ? { key: 'stale', text: stale === 1 ? '1 change no longer applies' : `${stale} changes no longer apply`, opens: null } : null,
+  ]
+  const labels: (Item | null)[] = [
+    { key: 'label-rules', text: `rules ${formatTokens(tokens.rules ?? 0)}`, opens: 'rules' },
+    counts[0] ?? null,
+    (tokens.large ?? 0) > 0 ? { key: 'label-large', text: `large ${formatTokens(tokens.large ?? 0)}`, opens: 'large' } : null,
+    counts[1] ?? null,
+    counts[2] ?? null,
+  ]
+  const items = (mode === 'full' ? labels : mode === 'counts' ? counts : []).filter((item): item is Item => item !== null)
+  // The cells the bar and the percentage leave, less the two gaps between them.
+  const room = bodyColumns - cells.reduce((sum, cell) => sum + cell.width, 0) - percent.length - 4
+
+  return (
+    <Box gap={2}>
+      <Box flexShrink={0}>{cells.map(cell => segment($, els, cell.kind, cell.width))}</Box>
+      <Button key="label-percent" plain label={percent} onPress={() => press($, 'ui.press', () => openOn($, 'rules'))} />
+      <Box gap={2} flexGrow={1} flexShrink={1}>
+        {items.map(item =>
+          item.opens === null ? (
+            <Text key={item.key} color={CLAY} wrap="truncate-end">
+              {item.text}
+            </Text>
+          ) : (
+            <Button key={item.key} plain dimColor label={item.text} onPress={() => press($, 'ui.press', () => openOn($, item.opens ?? 'rules'))} />
+          ),
+        )}
+        {room >= CARD_MIN && cells.map(cell => card(els, cell.kind, cardText(cell.kind, tokens[cell.kind] ?? 0, rules), room))}
+      </Box>
+    </Box>
+  )
+}
+
 // ---------------------------------------------------------------- hooks
 
 export const register: Register = (on, options) => {
@@ -931,6 +1080,10 @@ export const register: Register = (on, options) => {
     const done = await next(e)
     try {
       await refresh($)
+      // A refresh that works again ends what a failed one recorded; another event's note stays.
+      if ((await read($, lostAt)) === 'turn.complete') {
+        await update($, lostAt, () => null)
+      }
     } catch {
       await lose($, 'turn.complete')
     }
@@ -1030,52 +1183,35 @@ export const register: Register = (on, options) => {
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    let shot: HeadspaceSnapshot | null
     try {
-      const shot = await read($, snapshot)
-      if (shot === null || e.props.hasSurvey) {
-        return next(e)
+      shot = await read($, snapshot)
+    } catch {
+      shot = null
+    }
+    if (shot === null || e.props.hasSurvey) {
+      return next(e)
+    }
+    // One band for every plugin: emcc-core or witness may draw beneath, in the rows headspace's one row leaves.
+    // What they draw is never swallowed.
+    const below = await next({ ...e, props: { ...e.props, maxRows: Math.max(1, e.props.maxRows - 1) } })
+    try {
+      const row = await bandRow($, $.ui.resolve(e), shot, e.props.bodyColumns)
+      if (isBlank(below)) {
+        return row
       }
-      const { Box, Text, Button } = $.ui.resolve(e)
-      const els = { Box, Text, Button }
-      const mode = fallback(e.props.bodyColumns)
-      const columns = Math.max(BAR_MIN, Math.min(BAR_MAX, e.props.bodyColumns - BESIDE[mode]))
-      const tokens = Object.fromEntries(shot.segments.map(s => [s.kind, s.tokens])) as Partial<Record<HeadspaceKind, number>>
-      const rules = await read($, sessionRules)
-      const off = offCount(await read($, applied))
-      const marked = (await read($, marks)).length
-      const stale = await read($, staleCount)
-      const counts = [
-        off > 0 ? `${off} off` : null,
-        marked > 0 ? `${marked} marked` : null,
-        stale > 0 ? (stale === 1 ? '1 change no longer applies' : `${stale} changes no longer apply`) : null,
-      ]
-      const items =
-        mode === 'full'
-          ? [`rules ${formatTokens(tokens.rules ?? 0)}`, counts[0], (tokens.large ?? 0) > 0 ? `large ${formatTokens(tokens.large ?? 0)}` : null, counts[1], counts[2]]
-          : mode === 'counts'
-            ? counts
-            : []
+      const { Box } = $.ui.resolve(e)
 
+      // headspace's row first, then the band beneath; a pair taller than maxRows scrolls in the band's window.
       return (
-        <Box gap={2}>
-          <Box flexShrink={0}>
-            {widths(shot.segments, shot.window, columns)
-              .filter(cell => cell.width > 0)
-              .map(cell => segment($, els, cell.kind, cell.width, tokens[cell.kind] ?? 0, rules))}
-          </Box>
-          <Text bold>{`${Math.round(shot.percent)}%`}</Text>
-          {items
-            .filter((item): item is string => item !== null)
-            .map((item, i) => (
-              <Text key={`item-${i}`} color={item.includes('no longer') ? CLAY : STONE} wrap="truncate-end">
-                {item}
-              </Text>
-            ))}
+        <Box flexDirection="column">
+          {row}
+          {below}
         </Box>
       )
     } catch {
-      // Writes are refused while drawing: the engine's band stands in, and the pane says the rest.
-      return next(e)
+      // Writes are refused while drawing: the band beneath stands in, and the pane says the rest.
+      return below
     }
   })
 

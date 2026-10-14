@@ -70,6 +70,18 @@ describe('the bar', () => {
     expect(await state($, 'lostAt')).toBe('turn.complete')
   })
 
+  test('a later refresh that works clears where headspace lost track', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    it.categories = ROWS
+    it.api = 'not a conversation' as never
+    await endTurn($)
+    expect(await state($, 'lostAt')).toBe('turn.complete')
+    it.api = conversation()
+    await endTurn($)
+    expect(await state($, 'snapshot')).not.toBeNull()
+    expect(await state($, 'lostAt')).toBeNull()
+  })
+
   test('without a breakdown the snapshot stays null', WITH_PROBE, async ($, on) => {
     const it = session(on)
     it.categories = null
@@ -246,6 +258,16 @@ describe('apply', () => {
     expect(r.blocks.at(-1)).toEqual({ name: 'sessionRules', text: 'Session rules the person set for this session:\n- Answer briefly' })
   })
 
+  test('apply clears the count of changes that no longer apply', WITH_PROBE, async ($, on) => {
+    session(on)
+    const gone = ruleId('Never push', PROJECT_TEXT.replace('straight', 'directly'))
+    await seed($, 'applied', [{ source: PROJECT, changes: { [gone]: [{ type: 'off' }] } }])
+    await context($)
+    expect(await state($, 'staleCount')).toBe(1)
+    await command($, 'headspace', 'apply')
+    expect(await state($, 'staleCount')).toBe(0)
+  })
+
   test('/headspace apply with nothing waiting says so', WITH_PROBE, async ($, on) => {
     session(on)
     expect(await command($, 'headspace', 'apply')).toBe('headspace: nothing to apply')
@@ -389,6 +411,8 @@ type Disk = {
   files: Map<string, string>
   /** Every write, in order: path and text. */
   written: [string, string][]
+  /** For every write, in order: whether `$.store` already held a backup of that path when it happened. */
+  backedUp: boolean[]
   /** The store beneath headspace: what `$.store` holds. */
   store: Map<string, unknown>
   /** Every question asked, in order. */
@@ -403,7 +427,7 @@ type Disk = {
 
 /** The files on disk, the store and the person answering the questions, beneath headspace. */
 function disk(on: Parameters<typeof session>[0], files: Record<string, string>, store: Record<string, unknown> = {}): Disk {
-  const it: Disk = { files: new Map(Object.entries(files)), written: [], store: new Map(Object.entries(store)), asked: [], answers: [], whileAsking: null, env: { HOME: '/home/me' } }
+  const it: Disk = { files: new Map(Object.entries(files)), written: [], backedUp: [], store: new Map(Object.entries(store)), asked: [], answers: [], whileAsking: null, env: { HOME: '/home/me' } }
   on('session.root', () => ({ value: '/repo' }) as never)
   on('env.get', (_$, e) => ({ value: it.env[(e as unknown as { name: string }).name] }) as never)
   on('fs.exists', (_$, e) => ({ value: it.files.has((e as unknown as { path: string }).path) }) as never)
@@ -417,6 +441,7 @@ function disk(on: Parameters<typeof session>[0], files: Record<string, string>, 
   })
   on('fs.write', (_$, e) => {
     const { path, text } = e as unknown as { path: string; text: string }
+    it.backedUp.push(it.store.has(`backup:${path}`))
     it.files.set(path, text)
     it.written.push([path, text])
 
@@ -483,7 +508,7 @@ const BACKUP = `backup:${PROJECT}`
 const WITHOUT_NEVER = PROJECT_TEXT.replace('- Never push straight to main.\n', '')
 
 describe('saving rules to the file', () => {
-  test('save shows the diff, writes the rendered text, keeps a backup, and takes the changes out of applied', WITH_PROBE, async ($, on) => {
+  test('save shows the diff, writes the rendered text, keeps a backup, and keeps the changes in force until the engine reads the file again', WITH_PROBE, async ($, on) => {
     const it = session(on)
     const d = disk(on, { [PROJECT]: PROJECT_TEXT, [USER]: USER_TEXT })
     d.answers = ['Save']
@@ -497,9 +522,19 @@ describe('saving rules to the file', () => {
     expect(d.asked[0]?.includes('Commit messages')).toBe(false)
     expect(d.asked[0]?.endsWith(`Save these changes to ${PROJECT}?`)).toBe(true)
     expect(d.written).toEqual([[PROJECT, WITHOUT_NEVER]])
+    // The backup is kept before the file is written: a write that fails leaves the original to restore.
+    expect(d.backedUp).toEqual([true])
     expect(d.store.get(BACKUP)).toEqual({ saves: [{ at: 7000, text: PROJECT_TEXT }] })
-    expect(await state($, 'applied')).toEqual([])
     expect(it.invalidated).toContain('prompt.context')
+    // The engine may still hold the text it read before the save: the rule stays out all the same.
+    expect((await context($)).blocks[0]?.text).toBe(CLAUDE_MD.replace(PROJECT_TEXT, WITHOUT_NEVER))
+    expect((await state($, 'applied')).length).toBe(1)
+    // Once it reads the saved file, the change is in the file and leaves applied quietly, never as stale.
+    const reread = CLAUDE_MD.replace(PROJECT_TEXT, WITHOUT_NEVER)
+    const r = await $.prompt.context({ blocks: [{ name: 'claudeMd', text: reread }], instructionFiles: [FILES[0], { ...FILES[1], content: WITHOUT_NEVER }] } as never)
+    expect(r.blocks).toEqual([{ name: 'claudeMd', text: reread }])
+    expect(await state($, 'applied')).toEqual([])
+    expect((await state($, 'staleCount')) ?? 0).toBe(0)
     expect(it.invalidated).toContain('ui.render')
     expect(await ui.find({ type: 'Text', text: new RegExp(`^saved to ${PROJECT}$`) })).toBeDefined()
     await ui.unmount()
@@ -552,13 +587,18 @@ describe('saving rules to the file', () => {
     const ui = await pane($)
     await act(ui, PROJECT_SAVE)
     expect(d.written).toEqual([[PROJECT, onDisk.replace('- Never push straight to main.\n', '')]])
-    // The change that could not be saved stays in force for this session.
-    expect(await state($, 'applied')).toEqual([{ source: PROJECT, changes: two }])
     expect(await ui.find({ type: 'Text', text: /1 change cannot be saved: the rule differs on disk$/ })).toBeDefined()
+    // The engine reads the saved file again (its text without what it strips, as before): the saved change
+    // leaves applied, and the one that could not be saved stays in force for this session.
+    const reread = CLAUDE_MD.replace(PROJECT_TEXT, WITHOUT_NEVER)
+    const r = await $.prompt.context({ blocks: [{ name: 'claudeMd', text: reread }], instructionFiles: [FILES[0], { ...FILES[1], content: WITHOUT_NEVER }] } as never)
+    expect(r.blocks).toEqual([{ name: 'claudeMd', text: reread.replace('- Two spaces.\n', '') }])
+    expect(await state($, 'applied')).toEqual([{ source: PROJECT, changes: two }])
+    expect((await state($, 'staleCount')) ?? 0).toBe(0)
     await ui.unmount()
   })
 
-  test('undo save asks, restores the newest backup and pops it', WITH_PROBE, async ($, on) => {
+  test('undo save asks, restores the newest backup and keeps the text it replaced in its place', WITH_PROBE, async ($, on) => {
     session(on)
     const d = disk(on, { [PROJECT]: PROJECT_TEXT })
     await context($)
@@ -577,9 +617,29 @@ describe('saving rules to the file', () => {
     expect(d.asked[2]).toContain('+ - Never push straight to main.')
     expect(d.asked[2]?.endsWith(`Restore ${PROJECT} to how it was before the last save?`)).toBe(true)
     expect(d.files.get(PROJECT)).toBe(PROJECT_TEXT)
-    expect(d.store.has(BACKUP)).toBe(false)
-    expect(await ui.find({ key: PROJECT_UNDO })).toBeUndefined()
+    // The restored save is used up; what the undo wrote over is kept, so it too can be put back.
+    expect(d.store.get(BACKUP)).toEqual({ saves: [{ at: 0, text: WITHOUT_NEVER }] })
+    expect(d.backedUp).toEqual([true, true])
+    expect((await ui.find({ key: PROJECT_UNDO }))?.text).toBe('undo save')
     expect(await ui.find({ type: 'Text', text: new RegExp(`^restored ${PROJECT}$`) })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('after an undo, the change it took out of the file is still in force and can be saved again', WITH_PROBE, async ($, on) => {
+    session(on)
+    const d = disk(on, { [PROJECT]: PROJECT_TEXT })
+    await context($)
+    await seed($, 'applied', [{ source: PROJECT, changes: { [ruleId('Never push')]: [{ type: 'off' }] } }])
+    const ui = await pane($)
+    d.answers = ['Save', 'Restore', 'Save']
+    await act(ui, PROJECT_SAVE)
+    await act(ui, PROJECT_UNDO)
+    expect(d.files.get(PROJECT)).toBe(PROJECT_TEXT)
+    // The rule stays out of what Claude reads, as before the save.
+    expect((await context($)).blocks[0]?.text).toBe(CLAUDE_MD.replace(PROJECT_TEXT, WITHOUT_NEVER))
+    await act(ui, PROJECT_SAVE)
+    expect(d.files.get(PROJECT)).toBe(WITHOUT_NEVER)
+    expect(d.written.length).toBe(3)
     await ui.unmount()
   })
 
@@ -606,6 +666,25 @@ describe('saving rules to the file', () => {
     expect(await ui.find({ key: 'save-0' })).toBeUndefined()
     expect(await ui.find({ key: 'undo-0' })).toBeUndefined()
     expect((await ui.find({ key: 'save-1' }))?.text).toBe('save')
+    await ui.unmount()
+  })
+})
+
+describe('a Managed file is never written', () => {
+  test('save refuses a file that became Managed after the pane was drawn', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    const d = disk(on, { [PROJECT]: PROJECT_TEXT })
+    d.answers = ['Save']
+    await context($)
+    await seed($, 'applied', [{ source: PROJECT, changes: { [ruleId('Never push')]: [{ type: 'off' }] } }])
+    const ui = await pane($)
+    // The engine now reads the same path as an organization's file; the drawing still holds its save button.
+    await context($, [FILES[0], { ...FILES[1], kind: 'managed' }])
+    await ui.press({ key: PROJECT_SAVE })
+    expect(d.asked).toEqual([])
+    expect(d.written).toEqual([])
+    expect(d.store.has(BACKUP)).toBe(false)
+    expect(it.toasts).toEqual(['managed files are read-only'])
     await ui.unmount()
   })
 })
@@ -728,8 +807,24 @@ describe('undo and line ends', () => {
     d.answers = ['Restore']
     await act(ui, PROJECT_UNDO)
     expect(d.files.get(PROJECT)).toBe('second\n')
-    expect(d.store.get(BACKUP)).toEqual({ saves: [older[0]] })
+    expect(d.store.get(BACKUP)).toEqual({ saves: [older[0], { at: 0, text: PROJECT_TEXT }] })
     expect((await ui.find({ key: PROJECT_UNDO }))?.text).toBe('undo save')
+    await ui.unmount()
+  })
+
+  test('a file changed by hand while undo asked is not written, and its backups stay', WITH_PROBE, async ($, on) => {
+    session(on)
+    const older = [{ at: 1, text: 'first\n' }]
+    const d = disk(on, { [PROJECT]: PROJECT_TEXT }, { [BACKUP]: { saves: older } })
+    d.answers = ['Restore']
+    d.whileAsking = () => d.files.set(PROJECT, PROJECT_TEXT + '- A hand edit.\n')
+    await context($)
+    const ui = await pane($)
+    await act(ui, PROJECT_UNDO)
+    expect(d.written).toEqual([])
+    expect(d.files.get(PROJECT)).toBe(PROJECT_TEXT + '- A hand edit.\n')
+    expect(d.store.get(BACKUP)).toEqual({ saves: older })
+    expect(await ui.find({ type: 'Text', text: /^changed on disk, nothing written$/ })).toBeDefined()
     await ui.unmount()
   })
 
