@@ -17,7 +17,7 @@ import type { Category } from './bar'
 import { cacheCost, cutInstructions, label, largeResults } from './large'
 import type { LargeResult } from './large'
 import { memoryEntries, renderMemory } from './memory'
-import { parseRules, renderRules } from './rules'
+import { diffLines, parseRules, renderRules } from './rules'
 
 const COMMAND = 'headspace'
 const PANE = 'headspace'
@@ -242,6 +242,207 @@ async function rewriteClaudeMd($: EngineInterface, block: PromptContextBlock, fi
   }
 
   return text === block.text ? block : { name: block.name, text }
+}
+
+// ---------------------------------------------------------------- save and undo
+
+/** How many saves of one file `$.store` keeps to undo. */
+const MAX_BACKUPS = 10
+const SESSION_HEADING = '## Session rules'
+/** At most this many changed lines in a confirmation; the rest are counted. */
+const DIFF_LINES = 30
+
+type Backup = { at: number; text: string }
+
+/** The last save's outcome per source (a path, or SESSION_RULES), shown in the pane under its group. */
+const saveNotices = new Map<string, string>()
+
+function backupKey(path: string): string {
+  return `backup:${path}`
+}
+
+async function backupsOf($: EngineInterface, path: string): Promise<Backup[]> {
+  const value = (await $.store.get(backupKey(path))) as { saves?: unknown } | undefined
+  const saves = Array.isArray(value?.saves) ? (value.saves as unknown[]) : []
+
+  return saves.filter((s): s is Backup => typeof s === 'object' && s !== null && typeof (s as Backup).text === 'string' && typeof (s as Backup).at === 'number')
+}
+
+/** Shows the outcome under the group, and as a toast; answers it. */
+function notify($: EngineInterface, source: string, text: string): string {
+  saveNotices.set(source, text)
+  $.ui.toast(text)
+  $.ui.invalidate('ui.render')
+
+  return text
+}
+
+/** The changed lines between two texts, `- ` out and `+ ` in, as a confirmation shows them. */
+function diffText(before: string, after: string): string {
+  const changed = diffLines(before, after).filter(line => line.type !== 'same')
+  const shownLines = changed.slice(0, DIFF_LINES).map(line => `${line.type === 'out' ? '-' : '+'} ${line.text}`)
+  const more = changed.length - shownLines.length
+
+  return [...shownLines, ...(more > 0 ? [`and ${count(more, 'more line')}`] : [])].join('\n')
+}
+
+/** Asks with `yes` and Cancel; a dismissed question is a Cancel. */
+async function confirm($: EngineInterface, question: string, yes: string): Promise<boolean> {
+  try {
+    return (await $.ui.ask(question, [yes, 'Cancel'])) === yes
+  } catch {
+    return false
+  }
+}
+
+/** A file's text, or '' when it is not there yet. */
+async function readOrEmpty($: EngineInterface, path: string): Promise<string> {
+  return (await $.fs.exists(path)) ? await $.fs.read(path) : ''
+}
+
+/**
+ * Writes `text` over `path`, which held `disk` when it was read: refused when
+ * the file changed since; else `disk` is kept first as the newest backup (ten
+ * at most). Answers the refusal, or null once written.
+ */
+async function writeKeepingBackup($: EngineInterface, path: string, disk: string, text: string): Promise<string | null> {
+  if ((await readOrEmpty($, path)) !== disk) {
+    return 'changed on disk, nothing written'
+  }
+  const saves = [...(await backupsOf($, path)), { at: await $.clock.now(), text: disk }].slice(-MAX_BACKUPS)
+  await $.store.set(backupKey(path), { saves })
+  await $.fs.write(path, text)
+
+  return null
+}
+
+/**
+ * Writes a file's applied changes into the file on disk, after showing the
+ * diff and asking. Rule ids are worked out on the disk text: a change whose
+ * rule reads otherwise there is not saved, stays in force, and is counted.
+ * The saved changes leave applied: they are in the file now.
+ */
+async function save($: EngineInterface, source: string): Promise<string> {
+  try {
+    const entry = (await read($, applied)).find(f => f.source === source)
+    if (entry === undefined) {
+      return notify($, source, 'nothing applied to save')
+    }
+    const disk = await $.fs.read(source)
+    const { text, unknown } = renderRules(parseRules(disk), entry.changes)
+    const lost = countChanges(entry.changes, unknown)
+    const lostLine = lost > 0 ? `${count(lost, 'change')} cannot be saved: the rule differs on disk` : null
+    if (text === disk) {
+      return notify($, source, lostLine ?? 'nothing to save')
+    }
+    if (!(await confirm($, `${diffText(disk, text)}\n\nSave these changes to ${source}?`, 'Save'))) {
+      return notify($, source, 'nothing written')
+    }
+    const refusal = await writeKeepingBackup($, source, disk, text)
+    if (refusal !== null) {
+      return notify($, source, refusal)
+    }
+    await update($, applied, files =>
+      files
+        .map(f => (f.source === source ? { source, changes: Object.fromEntries(Object.entries(f.changes).filter(([id]) => unknown.includes(id))) } : f))
+        .filter(f => Object.keys(f.changes).length > 0),
+    )
+    $.ui.invalidate('prompt.context')
+
+    return notify($, source, lostLine === null ? `saved to ${source}` : `saved to ${source}; ${lostLine}`)
+  } catch (error) {
+    return notify($, source, `nothing written: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
+/** Puts back the file as it was before its last save, after showing the diff and asking; that backup is used up. */
+async function undoSave($: EngineInterface, source: string): Promise<string> {
+  try {
+    const saves = await backupsOf($, source)
+    const last = saves.at(-1)
+    if (last === undefined) {
+      return notify($, source, 'no save to undo')
+    }
+    const current = await readOrEmpty($, source)
+    if (!(await confirm($, `${diffText(current, last.text)}\n\nRestore ${source} to how it was before the last save?`, 'Restore'))) {
+      return notify($, source, 'nothing written')
+    }
+    await $.fs.write(source, last.text)
+    const rest = saves.slice(0, -1)
+    if (rest.length === 0) {
+      await $.store.delete(backupKey(source))
+    } else {
+      await $.store.set(backupKey(source), { saves: rest })
+    }
+    $.ui.invalidate('prompt.context')
+
+    return notify($, source, `restored ${source}`)
+  } catch (error) {
+    return notify($, source, `nothing written: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
+/** `text` with `- rule` added at the end of its `## Session rules` section, the section made at the end when absent. */
+function withSessionRule(text: string, rule: string): string {
+  const eol = text.includes('\r\n') ? '\r\n' : '\n'
+  const lines = text === '' ? [] : text.split(eol)
+  if (lines.at(-1) === '') {
+    lines.pop()
+  }
+  const item = `- ${rule}`
+  const heading = lines.findIndex(line => line.trim() === SESSION_HEADING)
+  if (heading === -1) {
+    const gap = lines.length > 0 && lines.at(-1)?.trim() !== '' ? [''] : []
+
+    return [...lines, ...gap, SESSION_HEADING, '', item].join(eol) + eol
+  }
+  const next = lines.findIndex((line, at) => at > heading && /^ {0,3}#{1,6}(?:[ \t]|$)/.test(line))
+  let end = next === -1 ? lines.length : next
+  while (end > heading + 1 && lines[end - 1]?.trim() === '') {
+    end--
+  }
+  const gap = end === heading + 1 ? [''] : []
+
+  return [...lines.slice(0, end), ...gap, item, ...lines.slice(end)].join(eol) + eol
+}
+
+/** Saves a session rule into the project's CLAUDE.md or the person's, as they choose, after showing the diff and asking. */
+async function saveSessionRule($: EngineInterface, rule: string): Promise<string> {
+  try {
+    let where: string
+    try {
+      where = await $.ui.ask('Save this rule to which CLAUDE.md?', ['Project', 'User', 'Cancel'])
+    } catch {
+      where = 'Cancel'
+    }
+    let path: string
+    if (where === 'Project') {
+      path = `${await $.session.root()}/CLAUDE.md`
+    } else if (where === 'User') {
+      const config = await $.env.get('CLAUDE_CONFIG_DIR')
+      const home = await $.env.get('HOME')
+      if (config === undefined && home === undefined) {
+        return notify($, SESSION_RULES, 'cannot find your CLAUDE.md: HOME is not set')
+      }
+      path = `${config ?? `${home}/.claude`}/CLAUDE.md`
+    } else {
+      return notify($, SESSION_RULES, 'nothing written')
+    }
+    const disk = await readOrEmpty($, path)
+    const text = withSessionRule(disk, rule)
+    if (!(await confirm($, `${diffText(disk, text)}\n\nSave these changes to ${path}?`, 'Save'))) {
+      return notify($, SESSION_RULES, 'nothing written')
+    }
+    const refusal = await writeKeepingBackup($, path, disk, text)
+    if (refusal !== null) {
+      return notify($, SESSION_RULES, refusal)
+    }
+    $.ui.invalidate('prompt.context')
+
+    return notify($, SESSION_RULES, `saved to ${path}`)
+  } catch (error) {
+    return notify($, SESSION_RULES, `nothing written: ${error instanceof Error ? error.message : String(error)}`)
+  }
 }
 
 // ---------------------------------------------------------------- large results
@@ -529,6 +730,9 @@ async function rulesBody($: EngineInterface, { Box, Text, Button }: Els, Input: 
   const groups = ruleGroups()
   const waitingCount = waiting.reduce((sum, f) => sum + Object.keys(f.changes).length, 0) + ((await read($, pendingSessionRules)) === null ? 0 : 1)
   const used = (shot?.segments ?? []).filter(s => s.kind !== 'free' && s.kind !== 'reserve').reduce((sum, s) => sum + s.tokens, 0)
+  /** Whether each group's file has a save to undo: only files headspace may write. */
+  const undoable = await Promise.all(groups.map(async g => !g.isManaged && !g.isMemory && (await backupsOf($, g.source).catch(() => [])).length > 0))
+  const sessionNotice = saveNotices.get(SESSION_RULES)
 
   return (
     <Box flexDirection="column" gap={1}>
@@ -538,6 +742,13 @@ async function rulesBody($: EngineInterface, { Box, Text, Button }: Els, Input: 
           <Text bold wrap="truncate-start">
             {group.isManaged ? `${group.title}  managed` : group.title}
           </Text>
+          {!group.isManaged && !group.isMemory && (
+            <Box gap={2}>
+              <Button key={`save-${g}`} plain label="save" onPress={() => press($, 'ui.press', () => save($, group.source))} />
+              {undoable[g] === true && <Button key={`undo-${g}`} plain label="undo save" onPress={() => press($, 'ui.press', () => undoSave($, group.source))} />}
+              {saveNotices.has(group.source) && <Text color={STONE}>{saveNotices.get(group.source)}</Text>}
+            </Box>
+          )}
           {group.rules.map((rule, r) => {
             const list = effective(waiting, inForce, group.source, rule.id)
             const isOff = list.some(c => c.type === 'off')
@@ -610,8 +821,10 @@ async function rulesBody($: EngineInterface, { Box, Text, Button }: Els, Input: 
             <Text color={CLAY}>●</Text>
             <Text>{rule}</Text>
             <Button key={`session-remove-${i}`} plain dimColor label="remove" onPress={() => press($, 'ui.press', () => removeSessionRule($, i))} />
+            <Button key={`session-save-${i}`} plain dimColor label="save" onPress={() => press($, 'ui.press', () => saveSessionRule($, rule))} />
           </Box>
         ))}
+        {sessionNotice !== undefined && <Text color={STONE}>{sessionNotice}</Text>}
         {Input !== undefined && (
           <Input key="session-rule" placeholder="add a session rule" value="" onSubmit={value => press($, 'ui.input', () => addSessionRule($, value))} />
         )}

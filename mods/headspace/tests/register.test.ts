@@ -375,3 +375,372 @@ describe('removing large results', () => {
     expect(await state($, 'lostAt')).toBeNull()
   })
 })
+
+// ---------------------------------------------------------------- save and undo
+
+const PANE = {
+  component: 'Pane',
+  requestId: 'headspace',
+  props: { title: 'headspace', isFocused: true, bodyColumns: 100, placement: 'dock', scroll: { offset: 0, bodyRows: 80 }, view: {} },
+  viewport: { rows: 80, columns: 100 },
+} as const
+
+type Disk = {
+  files: Map<string, string>
+  /** Every write, in order: path and text. */
+  written: [string, string][]
+  /** The store beneath headspace: what `$.store` holds. */
+  store: Map<string, unknown>
+  /** Every question asked, in order. */
+  asked: string[]
+  /** The answers given, one per question, in order; a question past them is dismissed. */
+  answers: string[]
+  /** Runs once a question is asked, before it is answered: how a test changes the file meanwhile. */
+  whileAsking: (() => void) | null
+  /** The environment headspace reads. */
+  env: Record<string, string>
+}
+
+/** The files on disk, the store and the person answering the questions, beneath headspace. */
+function disk(on: Parameters<typeof session>[0], files: Record<string, string>, store: Record<string, unknown> = {}): Disk {
+  const it: Disk = { files: new Map(Object.entries(files)), written: [], store: new Map(Object.entries(store)), asked: [], answers: [], whileAsking: null, env: { HOME: '/home/me' } }
+  on('session.root', () => ({ value: '/repo' }) as never)
+  on('env.get', (_$, e) => ({ value: it.env[(e as unknown as { name: string }).name] }) as never)
+  on('fs.exists', (_$, e) => ({ value: it.files.has((e as unknown as { path: string }).path) }) as never)
+  on('fs.read', (_$, e) => {
+    const text = it.files.get((e as unknown as { path: string }).path)
+    if (text === undefined) {
+      throw new Error('ENOENT')
+    }
+
+    return { value: text } as never
+  })
+  on('fs.write', (_$, e) => {
+    const { path, text } = e as unknown as { path: string; text: string }
+    it.files.set(path, text)
+    it.written.push([path, text])
+
+    return { value: undefined } as never
+  })
+  on('store.get', (_$, e) => ({ value: it.store.get((e as unknown as { key: string }).key) }) as never)
+  on('store.set', (_$, e) => {
+    const { key, value } = e as unknown as { key: string; value: unknown }
+    it.store.set(key, JSON.parse(JSON.stringify(value)))
+
+    return { value: undefined } as never
+  })
+  on('store.delete', (_$, e) => {
+    it.store.delete((e as unknown as { key: string }).key)
+
+    return { value: undefined } as never
+  })
+  on('tool.call', { tool: 'AskUserQuestion' }, (_$, e) => {
+    const [question] = (e as unknown as { questions: { question: string }[] }).questions
+    it.asked.push(question?.question ?? '')
+    it.whileAsking?.()
+    it.whileAsking = null
+    const answer = it.answers.shift()
+    if (answer === undefined) {
+      return { isError: true, result: 'dismissed', text: 'The user dismissed the question' } as never
+    }
+
+    return { result: { questions: [question], answers: { [question?.question ?? '']: answer } } } as never
+  })
+
+  return it
+}
+
+const pane = ($: Engine) => $.ui.mount({ plugin: 'headspace', surface: 'terminal', ...PANE } as never)
+
+/**
+ * Presses `key`, then draws the pane again: the outcome line lives with the
+ * module and the backups in `$.store`, so headspace asks for the redraw with
+ * `$.ui.invalidate('ui.render')`, which the session fixture records and
+ * answers itself (it never reaches the engine here).
+ */
+async function act(ui: Awaited<ReturnType<typeof pane>>, key: string): Promise<void> {
+  await ui.press({ key })
+  await ui.redraw()
+}
+
+/** Every string an element and its children show. */
+function shown(element: unknown): string {
+  if (typeof element === 'string' || typeof element === 'number') {
+    return String(element)
+  }
+  if (element === null || typeof element !== 'object') {
+    return ''
+  }
+  const { props, children } = element as { props?: { label?: unknown }; children?: unknown[] }
+
+  return (typeof props?.label === 'string' ? props.label : '') + (children ?? []).map(shown).join('')
+}
+
+/** The project file is the second group (FILES lists the user's first). */
+const PROJECT_SAVE = 'save-1'
+const PROJECT_UNDO = 'undo-1'
+const BACKUP = `backup:${PROJECT}`
+const WITHOUT_NEVER = PROJECT_TEXT.replace('- Never push straight to main.\n', '')
+
+describe('saving rules to the file', () => {
+  test('save shows the diff, writes the rendered text, keeps a backup, and takes the changes out of applied', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    const d = disk(on, { [PROJECT]: PROJECT_TEXT, [USER]: USER_TEXT })
+    d.answers = ['Save']
+    await it.clock.advance(7000)
+    await context($)
+    await seed($, 'applied', [{ source: PROJECT, changes: { [ruleId('Never push')]: [{ type: 'off' }] } }])
+    const ui = await pane($)
+    await act(ui, PROJECT_SAVE)
+    expect(d.asked.length).toBe(1)
+    expect(d.asked[0]).toContain('- - Never push straight to main.')
+    expect(d.asked[0]?.includes('Commit messages')).toBe(false)
+    expect(d.asked[0]?.endsWith(`Save these changes to ${PROJECT}?`)).toBe(true)
+    expect(d.written).toEqual([[PROJECT, WITHOUT_NEVER]])
+    expect(d.store.get(BACKUP)).toEqual({ saves: [{ at: 7000, text: PROJECT_TEXT }] })
+    expect(await state($, 'applied')).toEqual([])
+    expect(it.invalidated).toContain('prompt.context')
+    expect(it.invalidated).toContain('ui.render')
+    expect(await ui.find({ type: 'Text', text: new RegExp(`^saved to ${PROJECT}$`) })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('Cancel, or a dismissed question, writes nothing and keeps the changes', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    const d = disk(on, { [PROJECT]: PROJECT_TEXT })
+    await context($)
+    const applied = [{ source: PROJECT, changes: { [ruleId('Never push')]: [{ type: 'off' }] } }]
+    await seed($, 'applied', applied)
+    const ui = await pane($)
+    d.answers = ['Cancel']
+    await act(ui, PROJECT_SAVE)
+    await act(ui, PROJECT_SAVE)
+    expect(d.asked.length).toBe(2)
+    expect(d.written).toEqual([])
+    expect(d.store.has(BACKUP)).toBe(false)
+    expect(await state($, 'applied')).toEqual(applied)
+    expect(it.invalidated.includes('prompt.context')).toBe(false)
+    expect(await ui.find({ type: 'Text', text: /^nothing written$/ })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('a file changed on disk while the person was asked is not written', WITH_PROBE, async ($, on) => {
+    session(on)
+    const d = disk(on, { [PROJECT]: PROJECT_TEXT })
+    d.answers = ['Save']
+    d.whileAsking = () => d.files.set(PROJECT, PROJECT_TEXT + '- Someone else wrote this.\n')
+    await context($)
+    await seed($, 'applied', [{ source: PROJECT, changes: { [ruleId('Never push')]: [{ type: 'off' }] } }])
+    const ui = await pane($)
+    await act(ui, PROJECT_SAVE)
+    expect(d.written).toEqual([])
+    expect(d.store.has(BACKUP)).toBe(false)
+    expect(await ui.find({ type: 'Text', text: /^changed on disk, nothing written$/ })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('a change whose rule differs on disk is not saved, and the pane says how many', WITH_PROBE, async ($, on) => {
+    session(on)
+    const onDisk = PROJECT_TEXT.replace('Two spaces.', 'Two spaces, always.')
+    const d = disk(on, { [PROJECT]: onDisk })
+    d.answers = ['Save']
+    await context($)
+    const two = { [ruleId('Two spaces')]: [{ type: 'off' }] }
+    // Put in force the way the pane does (pending, then apply): a seeded `applied` would hide what the save keeps.
+    await seed($, 'pending', [{ source: PROJECT, changes: { [ruleId('Never push')]: [{ type: 'off' }], ...two } }])
+    await command($, 'headspace', 'apply')
+    const ui = await pane($)
+    await act(ui, PROJECT_SAVE)
+    expect(d.written).toEqual([[PROJECT, onDisk.replace('- Never push straight to main.\n', '')]])
+    // The change that could not be saved stays in force for this session.
+    expect(await state($, 'applied')).toEqual([{ source: PROJECT, changes: two }])
+    expect(await ui.find({ type: 'Text', text: /1 change cannot be saved: the rule differs on disk$/ })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('undo save asks, restores the newest backup and pops it', WITH_PROBE, async ($, on) => {
+    session(on)
+    const d = disk(on, { [PROJECT]: PROJECT_TEXT })
+    await context($)
+    let ui = await pane($)
+    expect(await ui.find({ key: PROJECT_UNDO })).toBeUndefined()
+    await ui.unmount()
+    await seed($, 'applied', [{ source: PROJECT, changes: { [ruleId('Never push')]: [{ type: 'off' }] } }])
+    ui = await pane($)
+    d.answers = ['Save', 'Cancel', 'Restore']
+    await act(ui, PROJECT_SAVE)
+    expect(d.files.get(PROJECT)).toBe(WITHOUT_NEVER)
+    expect((await ui.find({ key: PROJECT_UNDO }))?.text).toBe('undo save')
+    await act(ui, PROJECT_UNDO)
+    expect(d.files.get(PROJECT)).toBe(WITHOUT_NEVER)
+    await act(ui, PROJECT_UNDO)
+    expect(d.asked[2]).toContain('+ - Never push straight to main.')
+    expect(d.asked[2]?.endsWith(`Restore ${PROJECT} to how it was before the last save?`)).toBe(true)
+    expect(d.files.get(PROJECT)).toBe(PROJECT_TEXT)
+    expect(d.store.has(BACKUP)).toBe(false)
+    expect(await ui.find({ key: PROJECT_UNDO })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: new RegExp(`^restored ${PROJECT}$`) })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('the backups keep the last ten saves, newest last', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    const old = Array.from({ length: 10 }, (_, i) => ({ at: i, text: `save ${i}` }))
+    const d = disk(on, { [PROJECT]: PROJECT_TEXT }, { [BACKUP]: { saves: old } })
+    d.answers = ['Save']
+    await it.clock.advance(50)
+    await context($)
+    await seed($, 'applied', [{ source: PROJECT, changes: { [ruleId('Never push')]: [{ type: 'off' }] } }])
+    const ui = await pane($)
+    await act(ui, PROJECT_SAVE)
+    expect(d.store.get(BACKUP)).toEqual({ saves: [...old.slice(1), { at: 50, text: PROJECT_TEXT }] })
+    await ui.unmount()
+  })
+
+  test('a Managed file offers no save and no undo', WITH_PROBE, async ($, on) => {
+    session(on)
+    const managed = '/etc/claude/CLAUDE.md'
+    disk(on, { [managed]: '- Follow the policy.\n' }, { [`backup:${managed}`]: { saves: [{ at: 0, text: '' }] } })
+    await $.prompt.context({ blocks: BLOCKS, instructionFiles: [{ path: managed, kind: 'managed', content: '- Follow the policy.\n' }, ...FILES] } as never)
+    const ui = await pane($)
+    expect(await ui.find({ key: 'save-0' })).toBeUndefined()
+    expect(await ui.find({ key: 'undo-0' })).toBeUndefined()
+    expect((await ui.find({ key: 'save-1' }))?.text).toBe('save')
+    await ui.unmount()
+  })
+})
+
+describe('saving a session rule', () => {
+  test('into the project CLAUDE.md: the heading made once at the end, each rule appended under it', WITH_PROBE, async ($, on) => {
+    session(on)
+    const d = disk(on, { [PROJECT]: PROJECT_TEXT })
+    await context($)
+    await seed($, 'sessionRules', ['Keep the public API unchanged', 'Answer briefly'])
+    const ui = await pane($)
+    d.answers = ['Project', 'Save']
+    await act(ui, 'session-save-0')
+    expect(d.asked[0]).toBe('Save this rule to which CLAUDE.md?')
+    expect(d.asked[1]).toContain('+ - Keep the public API unchanged')
+    expect(d.asked[1]?.endsWith(`Save these changes to ${PROJECT}?`)).toBe(true)
+    expect(d.files.get(PROJECT)).toBe(PROJECT_TEXT + '\n## Session rules\n\n- Keep the public API unchanged\n')
+    expect(d.store.get(BACKUP)).toEqual({ saves: [{ at: 0, text: PROJECT_TEXT }] })
+    d.answers = ['Project', 'Save']
+    await act(ui, 'session-save-1')
+    expect(d.files.get(PROJECT)).toBe(PROJECT_TEXT + '\n## Session rules\n\n- Keep the public API unchanged\n- Answer briefly\n')
+    await ui.unmount()
+  })
+
+  test('under a heading already there, before the next section', WITH_PROBE, async ($, on) => {
+    session(on)
+    const text = '## Session rules\n\n- Old rule\n\n# Style\n\n- Two spaces.\n'
+    const d = disk(on, { [PROJECT]: text })
+    await seed($, 'sessionRules', ['Answer briefly'])
+    const ui = await pane($)
+    d.answers = ['Project', 'Save']
+    await act(ui, 'session-save-0')
+    expect(d.files.get(PROJECT)).toBe('## Session rules\n\n- Old rule\n- Answer briefly\n\n# Style\n\n- Two spaces.\n')
+    await ui.unmount()
+  })
+
+  test('into the user CLAUDE.md, made when missing; Cancel at either question writes nothing', WITH_PROBE, async ($, on) => {
+    session(on)
+    const d = disk(on, {})
+    await seed($, 'sessionRules', ['Answer briefly'])
+    const ui = await pane($)
+    d.answers = ['Cancel']
+    await act(ui, 'session-save-0')
+    d.answers = ['User', 'Cancel']
+    await act(ui, 'session-save-0')
+    expect(d.written).toEqual([])
+    d.answers = ['User', 'Save']
+    await act(ui, 'session-save-0')
+    expect(d.written).toEqual([[USER, '## Session rules\n\n- Answer briefly\n']])
+    expect(d.store.get(`backup:${USER}`)).toEqual({ saves: [{ at: 0, text: '' }] })
+    expect(shown(await ui.find({ type: 'Text', text: new RegExp(`^saved to ${USER}$`) }))).toBe(`saved to ${USER}`)
+    await ui.unmount()
+  })
+
+  test('the user CLAUDE.md follows CLAUDE_CONFIG_DIR; without it or HOME nothing is written', WITH_PROBE, async ($, on) => {
+    session(on)
+    const d = disk(on, {})
+    d.env = { HOME: '/home/me', CLAUDE_CONFIG_DIR: '/cfg' }
+    await seed($, 'sessionRules', ['Answer briefly'])
+    const ui = await pane($)
+    d.answers = ['User', 'Save']
+    await act(ui, 'session-save-0')
+    expect(d.written.map(([path]) => path)).toEqual(['/cfg/CLAUDE.md'])
+    d.env = {}
+    d.answers = ['User', 'Save']
+    await act(ui, 'session-save-0')
+    expect(d.written.length).toBe(1)
+    expect(await ui.find({ type: 'Text', text: /^cannot find your CLAUDE\.md: HOME is not set$/ })).toBeDefined()
+    await ui.unmount()
+  })
+})
+
+describe('save with nothing to do, or a file it cannot read', () => {
+  test('nothing applied: no question, nothing written', WITH_PROBE, async ($, on) => {
+    session(on)
+    const d = disk(on, { [PROJECT]: PROJECT_TEXT })
+    await context($)
+    const ui = await pane($)
+    await act(ui, PROJECT_SAVE)
+    expect(d.asked).toEqual([])
+    expect(d.written).toEqual([])
+    expect(await ui.find({ type: 'Text', text: /^nothing applied to save$/ })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('only changes that differ on disk: no question, the pane says how many', WITH_PROBE, async ($, on) => {
+    session(on)
+    const d = disk(on, { [PROJECT]: PROJECT_TEXT.replace('Two spaces.', 'Two spaces, always.') })
+    await context($)
+    await seed($, 'applied', [{ source: PROJECT, changes: { [ruleId('Two spaces')]: [{ type: 'off' }] } }])
+    const ui = await pane($)
+    await act(ui, PROJECT_SAVE)
+    expect(d.asked).toEqual([])
+    expect(d.written).toEqual([])
+    expect(await ui.find({ type: 'Text', text: /^1 change cannot be saved: the rule differs on disk$/ })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('a file it cannot read: nothing written, the reason shown, nothing lost', WITH_PROBE, async ($, on) => {
+    session(on)
+    const d = disk(on, {})
+    await context($)
+    await seed($, 'applied', [{ source: PROJECT, changes: { [ruleId('Never push')]: [{ type: 'off' }] } }])
+    const ui = await pane($)
+    await act(ui, PROJECT_SAVE)
+    expect(d.written).toEqual([])
+    expect(await ui.find({ type: 'Text', text: /^nothing written: \S/ })).toBeDefined()
+    expect(await state($, 'lostAt')).toBeNull()
+    await ui.unmount()
+  })
+})
+
+describe('undo and line ends', () => {
+  test('undo with older saves restores the newest and keeps the rest', WITH_PROBE, async ($, on) => {
+    session(on)
+    const older = [{ at: 1, text: 'first\n' }, { at: 2, text: 'second\n' }]
+    const d = disk(on, { [PROJECT]: PROJECT_TEXT }, { [BACKUP]: { saves: older } })
+    await context($)
+    const ui = await pane($)
+    d.answers = ['Restore']
+    await act(ui, PROJECT_UNDO)
+    expect(d.files.get(PROJECT)).toBe('second\n')
+    expect(d.store.get(BACKUP)).toEqual({ saves: [older[0]] })
+    expect((await ui.find({ key: PROJECT_UNDO }))?.text).toBe('undo save')
+    await ui.unmount()
+  })
+
+  test('a session rule saved into a CRLF file keeps its line ends', WITH_PROBE, async ($, on) => {
+    session(on)
+    const d = disk(on, { [PROJECT]: '# Git\r\n\r\n- One.\r\n' })
+    await seed($, 'sessionRules', ['Answer briefly'])
+    const ui = await pane($)
+    d.answers = ['Project', 'Save']
+    await act(ui, 'session-save-0')
+    expect(d.files.get(PROJECT)).toBe('# Git\r\n\r\n- One.\r\n\r\n## Session rules\r\n\r\n- Answer briefly\r\n')
+    await ui.unmount()
+  })
+})
