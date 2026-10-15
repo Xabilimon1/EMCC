@@ -15,7 +15,7 @@
   <a href="#see-it-work">See it work</a>&emsp;&emsp;
   <a href="#install">Install</a>&emsp;&emsp;
   <a href="#mods">Mods</a>&emsp;&emsp;
-  <a href="#status-line">Status line</a>&emsp;&emsp;
+  <a href="#only-the-status-line">Status line</a>&emsp;&emsp;
   <a href="#what-a-mod-can-reach">What a mod can reach</a>&emsp;&emsp;
   <a href="#build-on-emcc">Build on EMCC</a>
 </p>
@@ -127,6 +127,35 @@ claude plugin install emcc-core@emcc --config profile=strict
 
 </details>
 
+## Only the status line
+
+<p><img src="docs/media/statusline/statusline.png" alt="The status line: ctx at 23 percent, 5h at 19 percent, 7d at 12 percent as small bars, then model Haiku 4.5, proj emcc-demo and Developer/emcc-demo"></p>
+
+If all you want is this line under the prompt, you need nothing else from EMCC: it is not a mod, just one bash script that reads what Claude Code sends it.
+
+- `ctx`: how full the context window is
+- `5h` and `7d`: how much of the 5-hour and 7-day rate limits you have used (Pro and Max plans)
+- then the model, the project and the directory
+
+The bars turn yellow from 50% and red from 80%. It needs [jq](https://jqlang.github.io/jq/).
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Xabilimon1/emcc-claude-code-mods/main/statusline/statusline.sh -o ~/.claude/statusline.sh
+```
+
+Then add this to `~/.claude/settings.json` and restart Claude Code:
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "bash ~/.claude/statusline.sh"
+  }
+}
+```
+
+What each part reads, and what it shows before the first response: [`statusline/README.md`](statusline/README.md).
+
 ## Mods
 
 | | Mod | What it does | What it can reach | Version |
@@ -142,12 +171,6 @@ claude plugin install emcc-core@emcc --config profile=strict
 |---|---|---|
 | 1 | `redgreen` | TDD that only moves on when the test output says so: red first, then green. |
 | 2 | `cassette` | Records model replies once and replays a session offline, the same way every time. |
-
-## Status line
-
-<p><img src="docs/media/statusline/statusline.png" alt="The status line: ctx at 23 percent, 5h at 19 percent, 7d at 12 percent as small bars, then model Haiku 4.5, proj emcc-demo and Developer/emcc-demo"></p>
-
-[`statusline/`](statusline) is a one-line Claude Code status line in a single bash script: context window used, 5-hour and 7-day rate limits as colored bars (yellow from 50%, red from 80%), then the model, the project and the directory. It is not a mod and not part of the marketplace; copy the script and add one `statusLine` entry to your settings, as the [README there](statusline/README.md) describes.
 
 ## What a mod can reach
 

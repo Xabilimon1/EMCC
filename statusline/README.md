@@ -36,7 +36,13 @@ Without jq the script does not fail: it prints a line with `ctx` at 0%, `--` for
 
 ## Install
 
-Copy the script and make it executable:
+Download the script:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Xabilimon1/emcc-claude-code-mods/main/statusline/statusline.sh -o ~/.claude/statusline.sh
+```
+
+Or, from a clone of this repository, copy it:
 
 ```sh
 cp statusline/statusline.sh ~/.claude/statusline.sh
