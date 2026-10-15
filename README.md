@@ -2,7 +2,7 @@
 
 <p align="center">
   <b>Every Mod Claude Code</b><br>
-  Claude Code mods that check the work was done, instead of taking Claude's word for it.
+  Claude Code mods that show what Claude is doing and what it carries,<br>and check the work was done instead of taking its word for it.
 </p>
 
 <p align="center">
@@ -25,7 +25,7 @@
 </p>
 <p align="center"><sub>A real session, sped up: Claude Code 2.1.292 with Haiku 4.5, told <code>src/</code> is frozen, gets to green by changing what the test expects. goalpost-guard lets it through and reports it, witness marks that step and proves the next one with the test run, and headspace shows what the context holds. <a href="docs/media/hero/emcc-live.mp4">MP4</a></sub></p>
 
-"The tests pass" is a sentence. EMCC shows you what is behind it: which checks actually ran in this session, what they returned, and gates that hold when Claude tries to get to green by lowering the bar instead of fixing the code.
+"The tests pass" is a sentence. EMCC shows you what is behind it: which checks actually ran in this session, what they returned, and gates that hold when Claude tries to get to green by lowering the bar instead of fixing the code. And it shows what Claude is working from: the rules and results in its context, which you can take out.
 
 ## Why EMCC
 
@@ -33,7 +33,9 @@ Skills tell Claude what discipline to follow. Nothing in a skill checks that Cla
 
 - **Record what ran.** Every test, build, lint and typecheck command and its exit code, as the engine reported them, not as Claude summed them up.
 - **Hold the line.** Gates that ask you, report, or refuse, when Claude tries to pass by lowering the bar: a deleted assertion, a new `@ts-ignore`, `strict` turned off, `continue-on-error` in CI, `--no-verify`.
-- **Show it in one place.** One band above the prompt for every EMCC mod, instead of one line each.
+- **Show the work as it happens.** A live pane with the goal, where the time went and each step proven or flagged.
+- **Show what Claude carries.** The context by kind, so you can turn a rule off or take out a 6k tool result you no longer need.
+- **Keep it in one place.** One band above the prompt for every EMCC mod, instead of one line each.
 
 Every mod here has tests, states the Claude Code version it was tested with, and lists what it can reach.
 
@@ -41,10 +43,19 @@ Every mod here has tests, states the Claude Code version it was tested with, and
 
 Every image below is a real Claude Code session, recorded from a script you can rerun ([how](docs/media/README.md)).
 
+### headspace
+
+<p align="center">
+  <img src="docs/media/headspace/demo.gif" width="880" alt="Claude Code with Haiku 4.5 in a repo whose CLAUDE.md says Answer in French. Claude reads build.log and answers in French; headspace's bar shows a large result of 5.9k. In the headspace pane the rule Answer in French is turned off and applied, then the Read of build.log is marked in the large tab and removed after a confirmation. Claude's next answer is in English, the bar reads rules 28, 1 off, with no large result, and the percentage matches the status line below">
+</p>
+<p align="center"><sub>A real session, sped up: the project's CLAUDE.md says "Answer in French". The rule is turned off for this session and a 5.9k file read is taken out, without a summary; the next answer is in English. <a href="docs/media/headspace/demo.mp4">MP4</a></sub></p>
+
+### goalpost-guard
+
 <p align="center">
   <img src="docs/media/goalpost-guard/demo.gif" width="880" alt="Claude Code with Haiku 4.5, told src/ is frozen, rewrites a test's expected value from 24.19 to 24; goalpost-guard holds the edit and asks; the answer goes back to Claude, which fixes the rounding in src/cart.js instead, and the tests pass">
 </p>
-<p align="center"><sub>goalpost-guard on its own asks instead: the same task on Claude Code 2.1.287, where the answer sends Claude back to fix the code. <a href="docs/media/goalpost-guard/demo.mp4">MP4</a></sub></p>
+<p align="center"><sub>On its own goalpost-guard asks instead of reporting: the same task on Claude Code 2.1.287, where the answer sends Claude back to fix the code. <a href="docs/media/goalpost-guard/demo.mp4">MP4</a></sub></p>
 
 <table>
   <tr>
@@ -123,7 +134,7 @@ claude plugin install emcc-core@emcc --config profile=strict
 | <img src="docs/icons/ledger.svg" width="20" height="20" align="top" alt=""> | [`witness`](mods/witness) | A live pane of Claude's work: the goal, a ribbon of where the time went, what it is doing now, and each step marked proven, unproven, stale or flagged by goalpost-guard. Opens by itself on wide terminals; `/live`, `/goal`. | No network, no files, no processes, no model calls | 0.1.1 |
 | <img src="docs/icons/band.svg" width="20" height="20" align="top" alt=""> | [`emcc-core`](mods/emcc-core) | The base the others build on. Records test, build, lint and typecheck runs and edits; draws one band above the prompt with the latest result of each and the badges other mods post; sets the profile (`standard`, `strict`, `off`); `/emcc-halt` turns every gate off. | No network, no files, no processes | 0.2.1 |
 | <img src="docs/icons/goalpost.svg" width="20" height="20" align="top" alt=""> | [`goalpost-guard`](mods/goalpost-guard) | Holds any edit or command that lowers the bar: removed, skipped or loosened tests, rewritten expected values, tests pointed at a stand-in, new suppressions, relaxed lint and type config, softened CI, lowered coverage, skipped git hooks. Asks you, or with emcc-core reports it and flags it for witness (or denies); remembers exceptions per file or project; puts what was let through in the commit as a `Goalpost-Change` trailer; `/goalposts audit` checks a branch. | Reads the files a change touches; runs `git` only for `/goalposts audit`; no network | 0.2.1 |
-| | [`headspace`](mods/headspace) | What Claude carries, in colour: a bar above the prompt with system, rules, conversation and large tool results. Click a segment to open a pane where you turn CLAUDE.md and auto-memory rules off for the session, edit them, add session rules, save changes back to the file (with undo), and take large tool results out of the conversation without a summary. `/headspace`. Installs its companion [`headspace-cut`](mods/headspace-cut). | Reads and writes your instruction files (CLAUDE.md, rules files) only when you save or undo and confirm; no network, no processes, no model calls | 0.1.2 |
+| <img src="docs/icons/headspace.svg" width="20" height="20" align="top" alt=""> | [`headspace`](mods/headspace) | What Claude carries, in colour: a bar above the prompt with system, rules, conversation and large tool results. Click a segment to open a pane where you turn CLAUDE.md and auto-memory rules off for the session, edit them, add session rules, save changes back to the file (with undo), and take large tool results out of the conversation without a summary. `/headspace`. Installs its companion [`headspace-cut`](mods/headspace-cut). | Reads and writes your instruction files (CLAUDE.md, rules files) only when you save or undo and confirm; no network, no processes, no model calls | 0.1.3 |
 
 ### Coming next
 
@@ -133,6 +144,8 @@ claude plugin install emcc-core@emcc --config profile=strict
 | 2 | `cassette` | Records model replies once and replays a session offline, the same way every time. |
 
 ## Status line
+
+<p><img src="docs/media/statusline/statusline.png" alt="The status line: ctx at 23 percent, 5h at 19 percent, 7d at 12 percent as small bars, then model Haiku 4.5, proj emcc-demo and Developer/emcc-demo"></p>
 
 [`statusline/`](statusline) is a one-line Claude Code status line in a single bash script: context window used, 5-hour and 7-day rate limits as colored bars (yellow from 50%, red from 80%), then the model, the project and the directory. It is not a mod and not part of the marketplace; copy the script and add one `statusLine` entry to your settings, as the [README there](statusline/README.md) describes.
 
@@ -153,7 +166,7 @@ Every mod in EMCC:
 - draws on both the terminal and the desktop app wherever it draws, tested on both
 - states the Claude Code version it was tested with
 
-CI runs the first two on every push.
+CI runs the first two on every push, and checks that no hook's string literal holds a control character, which would keep the whole repository out of the [awesome-claude-code-mods](https://github.com/karanb192/awesome-claude-code-mods) catalogue.
 
 ## Build on EMCC
 

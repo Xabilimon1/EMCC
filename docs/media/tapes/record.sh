@@ -4,7 +4,7 @@
 # last screenshot exists. The demo repo is reset before every take, and the exceptions a take
 # stores for the demo repo (Allow in this file) are removed from the recording config's goalpost-guard store after.
 #
-#   ./record.sh            # scenes a, b, c and live
+#   ./record.sh            # scenes a, b, c, live and headspace
 #   ./record.sh a          # one scene
 set -uo pipefail
 cd "$(dirname "$0")"
@@ -43,12 +43,13 @@ last_shot() {
     b) echo out/07-commit.png ;;
     c) echo out/08-audit.png ;;
     live) echo out/10-live-end.png ;;
+    headspace) echo out/13-headspace-end.png ;;
   esac
 }
 
 # Each take is a real session and VHS is heavy on the CPU: EMCC_TAKES=1 records a single take.
 takes="${EMCC_TAKES:-4}"
-for scene in "${@:-a b c live}"; do
+for scene in "${@:-a b c live headspace}"; do
   for take in $(seq 1 "$takes"); do
     reset_demo
     rm -f "$(last_shot "$scene")"

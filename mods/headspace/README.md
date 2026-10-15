@@ -2,7 +2,10 @@
 
 What Claude carries, in colour, and what you can take out of it. Tested with **Claude Code 2.1.287**, terminal and desktop.
 
-<!-- the recordings from Task 11 go here -->
+<p align="center">
+  <img src="../../docs/media/headspace/demo.gif" width="880" alt="Claude Code with Haiku 4.5 in a repo whose CLAUDE.md says Answer in French. Claude reads build.log and answers in French; the bar shows a large result of 5.9k. In the pane the rule is turned off and applied, the Read of build.log is marked and removed after a confirmation, and the next answer is in English">
+</p>
+<p align="center"><sub>A real session on Claude Code 2.1.292, sped up: a CLAUDE.md rule turned off for the session and a 5.9k file read taken out, without a summary. <a href="../../docs/media/headspace/demo.mp4">MP4</a></sub></p>
 
 Other context mods show how full the window is. headspace shows what fills it: the system prompt and tools, your rules, the conversation, and the big tool results that pile up without you noticing. Point at a piece and see what it is. Then take it out: a CLAUDE.md rule for this session, a session rule of your own, or a 40k `cat` from an hour ago. No model call, nothing summarized.
 
@@ -19,7 +22,7 @@ One line above the prompt: a bar with one segment per kind, each as wide as its 
 | free | free space | an empty rail `▁`, stone, dimmed | no |
 | reserve | the autocompact buffer | stone, drawn `░` | no |
 
-The figures are Claude Code's own estimate, the one `/context` shows; headspace makes no token-count calls. Tool schemas loaded on demand (`MCP tools (deferred)` and the like) are not in the window, so they are not in the bar. The bar refreshes when a turn ends and when the pane opens; a subagent's turn end does not count.
+The figures start from Claude Code's own breakdown, the one `/context` shows, and headspace makes no token-count calls. That breakdown estimates each kind locally and gives the conversation what is left of the last response's input; with many tools installed the estimates run high and the conversation comes out too small. So headspace counts the conversation at no less than its characters over four, and makes the used kinds add up to the last response's input: the percentage is the status line's. Just after a compaction, until the next response, Claude Code has no such figure and the bar shows the estimate. Tool schemas loaded on demand (`MCP tools (deferred)` and the like) are not in the window, so they are not in the bar. The bar refreshes when a turn ends and when the pane opens; a subagent's turn end does not count.
 
 After the bar comes one label per kind that holds anything, in the bar's order, with the counts after the kind they count, so a change is never forgotten: `sys  rules 9.2k  2 off  conv  large 16k  3 marked  free  res`, and `1 change no longer applies` when a rule you changed is no longer in its file.
 

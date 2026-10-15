@@ -2,9 +2,7 @@
 
 A single-line status line for Claude Code. It shows how full the context window is, how much of the 5-hour and 7-day rate limits you have used, the model, the project and the directory:
 
-```
-ctx:[█████░░░░░] 46% | 5h:[███░░░░░]37% | 7d:[█░░░░░░░]15% | model:Opus 5.5 | proj:EMCC | Developer/EMCC
-```
+![The status line in a real session: ctx at 23 percent, 5h at 19 percent, 7d at 12 percent, model Haiku 4.5, proj emcc-demo, Developer/emcc-demo](../docs/media/statusline/statusline.png)
 
 It is one bash script, [`statusline.sh`](statusline.sh). It is not a mod: Claude Code runs it as a [status line command](https://code.claude.com/docs/en/statusline), it reads JSON on stdin and prints one line.
 

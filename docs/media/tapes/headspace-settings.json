@@ -1,0 +1,18 @@
+{
+  "statusLine": {
+    "type": "command",
+    "command": "bash \"$EMCC_STATUSLINE\""
+  },
+  "enabledPlugins": {
+    "superpowers@superpowers-marketplace": false,
+    "caveman@caveman": false,
+    "ui-ux-pro-max@ui-ux-pro-max-skill": false,
+    "obsidian@obsidian-skills": false,
+    "save@save-session": false,
+    "warp@claude-code-warp": false,
+    "typesafe@typesafe-ai": false
+  },
+  "claudeMdExcludes": [
+    "**/.claude/CLAUDE.md"
+  ]
+}

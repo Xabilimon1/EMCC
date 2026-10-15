@@ -11,5 +11,8 @@
     "save@save-session": false,
     "warp@claude-code-warp": false,
     "typesafe@typesafe-ai": false
-  }
+  },
+  "claudeMdExcludes": [
+    "**/.claude/CLAUDE.md"
+  ]
 }
