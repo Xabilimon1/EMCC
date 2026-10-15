@@ -28,7 +28,7 @@ const hash = (text: string): string => {
 const scan = (sectionText: string): { raw: string; entry: MemoryEntry | null }[] => {
   let isInFence = false
   return sectionText.split('\n').map((raw) => {
-    const line = raw.endsWith('\r') ? raw.slice(0, -1) : raw
+    const line = raw.replace(/\r$/, '')
     if (FENCE.test(line)) {
       isInFence = !isInFence
       return { raw, entry: null }

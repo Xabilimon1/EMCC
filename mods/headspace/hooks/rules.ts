@@ -7,8 +7,8 @@ import type { HeadspaceRuleChange } from '../types'
  */
 export type Rule = { id: string; heading: string; index: number; lines: string[]; start: number; end: number }
 
-/** A parsed file: every line, and the rules found in it. Lines outside rules (headings, blanks, fences) are kept as they are. */
-export type ParsedFile = { lines: string[]; rules: Rule[]; eol: '\n' | '\r\n'; finalNewline: boolean }
+/** A parsed file: every line, and the rules found in it. Lines outside rules (headings, blanks, fences) are kept as they are. `eol` is the file's own line end, LF or CRLF. */
+export type ParsedFile = { lines: string[]; rules: Rule[]; eol: string; finalNewline: boolean }
 
 /** FNV-1a, 32 bits, as 8 hex digits: short and stable across runs. */
 export const hash = (text: string): string => {
@@ -26,7 +26,7 @@ const FENCE_OPEN = /^\s*(`{3,}|~{3,})/
 const BLANK = /^\s*$/
 
 /** A line as classified: without the carriage return a file with mixed line ends leaves on it. */
-const bare = (line: string) => (line.endsWith('\r') ? line.slice(0, -1) : line)
+const bare = (line: string) => line.replace(/\r$/, '')
 
 const closesFence = (line: string, fence: string) => {
   const m = /^\s*(`{3,}|~{3,})\s*$/.exec(line)
@@ -36,9 +36,10 @@ const closesFence = (line: string, fence: string) => {
 /** Splits text into lines the way render joins them back. */
 const splitLines = (text: string): Pick<ParsedFile, 'lines' | 'eol' | 'finalNewline'> => {
   if (text === '') return { lines: [], eol: '\n', finalNewline: false }
-  const breaks = text.split('\n').length - 1
-  const crlfs = text.split('\r\n').length - 1
-  const eol = breaks > 0 && crlfs === breaks ? '\r\n' : '\n'
+  const breaks = text.match(/\n/g)?.length ?? 0
+  const crlfs = text.match(/\r\n/g) ?? []
+  // CRLF, taken from the text, only when every line ends with it.
+  const eol = breaks > 0 && crlfs.length === breaks ? crlfs[0]! : '\n'
   const lines = text.split(eol)
   const finalNewline = text.endsWith(eol)
   if (finalNewline) lines.pop()

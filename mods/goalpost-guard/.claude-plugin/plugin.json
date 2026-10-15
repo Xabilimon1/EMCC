@@ -1,6 +1,6 @@
 {
   "name": "goalpost-guard",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Stops Claude from passing a check by lowering the bar: weakened or deleted tests, new suppressions, relaxed config, softened CI, lowered coverage, skipped git hooks.",
   "author": {
     "name": "Xabilimon1",

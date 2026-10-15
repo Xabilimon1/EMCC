@@ -595,7 +595,7 @@ async function undoSave($: EngineInterface, source: string): Promise<string> {
 
 /** `text` with `- rule` added at the end of its `## Session rules` section, the section made at the end when absent. */
 function withSessionRule(text: string, rule: string): string {
-  const eol = text.includes('\r\n') ? '\r\n' : '\n'
+  const eol = /\r\n/.exec(text)?.[0] ?? '\n'
   const lines = text === '' ? [] : text.split(eol)
   if (lines.at(-1) === '') {
     lines.pop()

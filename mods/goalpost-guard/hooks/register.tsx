@@ -94,17 +94,14 @@ function settingsOf(options: Record<string, unknown>): Settings {
   }
 }
 
+// One pass, longest token first, so `**/` never reads as `*` twice and no placeholder is needed.
+const GLOB_TOKENS: Record<string, string> = { '**/': '(?:.*/)?', '**': '.*', '*': '[^/]*', '?': '[^/]' }
+
 function globToRegExp(glob: string): RegExp {
   const body = glob
     .replace(/^\.\//, '')
     .replace(/\/+$/, '')
-    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-    .replace(/\*\*\//g, '\u0001')
-    .replace(/\*\*/g, '\u0002')
-    .replace(/\*/g, '[^/]*')
-    .replace(/\?/g, '[^/]')
-    .replace(/\u0001/g, '(?:.*/)?')
-    .replace(/\u0002/g, '.*')
+    .replace(/\*\*\/|\*\*|\*|\?|[.+^${}()|[\]\\]/g, token => GLOB_TOKENS[token] ?? `\\${token}`)
 
   return new RegExp(`(?:^|/)${body}(?:/.*)?$`)
 }

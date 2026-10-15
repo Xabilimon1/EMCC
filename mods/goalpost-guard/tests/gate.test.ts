@@ -131,6 +131,22 @@ describe('modes and options', () => {
     expect(it.asked).toEqual([])
   })
 
+  for (const glob of ['**/add.test.ts', 'src/*.test.ts', 'src/add?test.ts', './src/', '**/src/**']) {
+    test(`ignorePaths ${glob} covers src/add.test.ts`, { options: { ignorePaths: [glob] } }, async ($, on) => {
+      const it = world(on)
+      await edit($)
+      expect(it.asked).toEqual([])
+    })
+  }
+
+  for (const glob of ['lib/**', 'src/*.ts/x', 'src/add+test.ts', '**/add.test', 'src/a?.test.ts']) {
+    test(`ignorePaths ${glob} does not cover src/add.test.ts`, { options: { ignorePaths: [glob] } }, async ($, on) => {
+      const it = world(on)
+      await edit($)
+      expect(it.asked).toHaveLength(1)
+    })
+  }
+
   test('if the file cannot be read the change is held, not let through', async ($, on) => {
     const it = world(on)
     it.isReadBroken = true

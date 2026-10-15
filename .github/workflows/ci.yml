@@ -20,6 +20,10 @@ jobs:
         run: npm install -g @anthropic-ai/claude-code@2.1.287
       - name: Validate the marketplace and every mod
         run: claude plugin validate --strict .
+      - name: No control characters in hook string literals (the catalogue holds the whole repo back for one)
+        run: |
+          npm install --no-save typescript@5.9
+          node scripts/check-ui-strings.mjs
       - name: Run every mod's tests
         run: |
           for mod in mods/*/; do
