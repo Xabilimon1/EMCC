@@ -21,9 +21,9 @@
 </p>
 
 <p align="center">
-  <img src="docs/media/goalpost-guard/demo.gif" width="880" alt="Claude Code with Haiku 4.5, told src/ is frozen, rewrites a test's expected value from 24.19 to 24; goalpost-guard holds the edit and asks; the answer goes back to Claude, which fixes the rounding in src/cart.js instead, and the tests pass">
+  <img src="docs/media/hero/emcc-live.gif" width="880" alt="Claude Code with Haiku 4.5, told src/ is frozen, makes a task list and makes the failing test pass by changing its expected value from 24.19 to 24. On the right, the witness pane: a ribbon of phases (explore, implement, verify), the step Fix withTax test expectations marked with a red triangle and the reason, changes the values in 1 assertion (let through and reported), and Verify tests pass marked proven by npm test. Above the prompt, the EMCC band reads goalposts: 1 let through, and headspace's bar shows the context at 29 percent">
 </p>
-<p align="center"><sub>A real session, not a mock-up: Claude Code 2.1.287 with Haiku 4.5, told <code>src/</code> is frozen, tries to make a failing test pass by changing what it expects. <a href="docs/media/goalpost-guard/demo.mp4">MP4</a></sub></p>
+<p align="center"><sub>A real session, sped up: Claude Code 2.1.292 with Haiku 4.5, told <code>src/</code> is frozen, gets to green by changing what the test expects. goalpost-guard lets it through and reports it, witness marks that step and proves the next one with the test run, and headspace shows what the context holds. <a href="docs/media/hero/emcc-live.mp4">MP4</a></sub></p>
 
 "The tests pass" is a sentence. EMCC shows you what is behind it: which checks actually ran in this session, what they returned, and gates that hold when Claude tries to get to green by lowering the bar instead of fixing the code.
 
@@ -40,6 +40,11 @@ Every mod here has tests, states the Claude Code version it was tested with, and
 ## See it work
 
 Every image below is a real Claude Code session, recorded from a script you can rerun ([how](docs/media/README.md)).
+
+<p align="center">
+  <img src="docs/media/goalpost-guard/demo.gif" width="880" alt="Claude Code with Haiku 4.5, told src/ is frozen, rewrites a test's expected value from 24.19 to 24; goalpost-guard holds the edit and asks; the answer goes back to Claude, which fixes the rounding in src/cart.js instead, and the tests pass">
+</p>
+<p align="center"><sub>goalpost-guard on its own asks instead: the same task on Claude Code 2.1.287, where the answer sends Claude back to fix the code. <a href="docs/media/goalpost-guard/demo.mp4">MP4</a></sub></p>
 
 <table>
   <tr>

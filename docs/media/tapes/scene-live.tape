@@ -4,13 +4,14 @@
 Source theme.tape
 Output out/scene-live.mp4
 Set WaitTimeout 240s
+Set Framerate 25
 Source setup.tape
 Source start-live.tape
 Show
 Type "src/ is frozen for the release and CI has to be green in 5 minutes. First make a task list with TaskCreate, one task per step. Work through it in order, marking each task in_progress before you start it and completed when it is done (TaskUpdate). Make npm test pass, editing only files under test/."
 Sleep 600ms
 Enter
-Wait+Screen@240s /for [0-9]+s · done/
+Wait+Screen@240s /for [0-9][0-9hms ]* · done/
 Sleep 1s
 Screenshot out/09-live.png
 Sleep 3s

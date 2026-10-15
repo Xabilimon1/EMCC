@@ -4,12 +4,13 @@ Every image and video in EMCC's READMEs is a real Claude Code session, recorded 
 
 ## Record them again
 
-You need Claude Code (signed in), VHS (`brew install vhs`), Node and ffmpeg.
+You need Claude Code, VHS (`brew install vhs`), Node and ffmpeg. The takes run in a Claude config of their own, `~/.claude-emcc-recording` (or `$EMCC_CLAUDE_CONFIG`), signed in once with `CLAUDE_CONFIG_DIR=~/.claude-emcc-recording claude` and `/login`, so no personal CLAUDE.md, memory or plugin shows up in a recording. `record.sh` refuses to run on `~/.claude`.
 
 ```sh
 docs/media/tapes/make-demo-repo.sh      # builds ~/Developer/emcc-demo (or the path you pass, or $EMCC_DEMO)
-docs/media/tapes/record.sh              # scenes a, b and c into docs/media/tapes/out/
+docs/media/tapes/record.sh              # scenes a, b, c and live into docs/media/tapes/out/
 docs/media/tapes/record.sh a            # one scene
+EMCC_TAKES=1 docs/media/tapes/record.sh live   # one take only (VHS is heavy on the CPU)
 ```
 
 The sessions load the mods from this repo with `--plugin-dir`, so what is recorded is what is committed, whether or not you have the mods installed. They run Haiku 4.5: Opus fixes the failing test properly on its own, so it never shows a guard at work.
@@ -23,6 +24,7 @@ A scene is a real model session, so a take can go another way (Haiku may fix the
 | [`scene-a.tape`](tapes/scene-a.tape) | Told `src/` is frozen, Claude rewrites the test's expected value; goalpost-guard holds it; the answer, typed in the dialog, sends Claude back to fix `src/cart.js` | `demo.gif`, `demo.mp4`, `dialog.png`, `dialog-card.png`, `answer.png`, `fixed.png`, `fixed-card.png` |
 | [`scene-b.tape`](tapes/scene-b.tape) | One change held, one allowed for the file and committed with its `Goalpost-Change` trailer, then the ledger's three tabs | `ledger.png`, `exceptions.png`, `rules.png`, `commit.png` |
 | [`scene-c.tape`](tapes/scene-c.tape) | `/goalposts audit main` on a branch that already lowered the bar | `audit.png` |
+| [`scene-live.tape`](tapes/scene-live.tape) | The same task with emcc-core, goalpost-guard, witness and headspace at 159 columns: Claude makes a task list, witness opens its pane and proves or flags each step, headspace's bar sits above the prompt | `hero/emcc-live.gif`, `hero/emcc-live.mp4` |
 
 The terminal uses Anthropic's palette (`#141413`, `#faf9f5`, `#d97757`, `#6a9bcc`, `#788c5d`; see [`theme.tape`](tapes/theme.tape)) and JetBrains Mono.
 
@@ -39,6 +41,13 @@ ffmpeg -i tapes/out/04-ledger.png -vf "crop=602:350:818:28,pad=iw+48:ih+40:24:20
 ```sh
 ffmpeg -i tapes/out/scene-a.mp4 -filter_complex "[0:v]trim=0:6.9,setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration=2.5[a];[0:v]trim=6.9:12.1,setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration=3.5[b];[a][b]concat=n=2:v=1[v]" -map "[v]" -c:v libx264 -pix_fmt yuv420p -crf 20 goalpost-guard/demo.mp4
 ffmpeg -i goalpost-guard/demo.mp4 -vf "fps=12,scale=1080:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=96:stats_mode=diff[p];[s1][p]paletteuse=dither=bayer:bayer_scale=4:diff_mode=rectangle" goalpost-guard/demo.gif
+```
+
+`hero/emcc-live.mp4` is the live scene sped up where nothing new happens (typing ×4, exploring ×3) and close to real time where the step is flagged, about 24 s in all; the GIF is 1080 px at 12 fps without dithering:
+
+```sh
+ffmpeg -i tapes/out/scene-live.mp4 -filter_complex "[0:v]trim=0:16,setpts=(PTS-STARTPTS)/4[a];[0:v]trim=16:20,setpts=(PTS-STARTPTS)/2[b];[0:v]trim=20:36,setpts=(PTS-STARTPTS)/3[c];[0:v]trim=36:44,setpts=(PTS-STARTPTS)/1.5[d];[0:v]trim=44:50,setpts=(PTS-STARTPTS)/2[e];[0:v]trim=50:53,setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration=1.5[f];[a][b][c][d][e][f]concat=n=6:v=1:a=0,fps=25[v]" -map "[v]" -c:v libx264 -pix_fmt yuv420p -crf 22 -movflags +faststart hero/emcc-live.mp4
+ffmpeg -i hero/emcc-live.mp4 -vf "fps=12,scale=1080:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=96:stats_mode=diff[p];[s1][p]paletteuse=dither=none:diff_mode=rectangle" hero/emcc-live.gif
 ```
 
 The cut points depend on the take: find them by looking at the frames (`ffmpeg -i tapes/out/scene-a.mp4 -vf fps=2 frame%03d.png`).
