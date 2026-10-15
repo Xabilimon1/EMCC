@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import type { HeadspaceKind, HeadspaceSegment } from '../types'
-import { COLOURS, ORDER, fallback, formatTokens, toSegments, widths, type Category } from '../hooks/bar'
+import { COLOURS, ORDER, fallback, formatTokens, reconcile, toSegments, widths, type Category } from '../hooks/bar'
 
 // The categories a real session's breakdown carried in the spike (fact 7), with round figures.
 const BREAKDOWN: Category[] = [
@@ -60,6 +60,66 @@ describe('toSegments', () => {
     const segments = toSegments(BREAKDOWN, -0.3, 0)
     expect(tokensOf(segments, 'large')).toBe(0)
     expect(tokensOf(segments, 'conversation')).toBe(20000)
+  })
+})
+
+// A summary breakdown from a real session (2026-10-15, Claude Code 2.1.292): Messages is what the last
+// response's usage leaves after local estimates, and with many tools the estimates run high, so a
+// 23,718-character Read sat in 773 tokens of Messages while /context counted 22.6k.
+const RESIDUAL: Category[] = [
+  { name: 'System prompt', tokens: 7173, kind: 'used' },
+  { name: 'System tools', tokens: 42149, kind: 'used' },
+  { name: 'MCP server instructions', tokens: 2308, kind: 'used' },
+  { name: 'MCP tools (deferred)', tokens: 546213, kind: 'deferred' },
+  { name: 'Memory files', tokens: 956, kind: 'used' },
+  { name: 'Skills', tokens: 2136, kind: 'used' },
+  { name: 'Messages', tokens: 773, kind: 'used' },
+  { name: 'Free space', tokens: 144699, kind: 'free' },
+]
+const rowOf = (categories: Category[], name: string) => categories.find(c => c.name === name)?.tokens
+const usedOf = (categories: Category[]) => categories.filter(c => c.kind === 'used').reduce((total, c) => total + c.tokens, 0)
+
+describe('reconcile', () => {
+  test('Messages below the conversation at characters / 4 is raised to it, and the system rows give way', async () => {
+    const out = reconcile(RESIDUAL, 24_800)
+    expect(rowOf(out, 'Messages')).toBe(6200)
+    expect(usedOf(out)).toBe(usedOf(RESIDUAL))
+    // Taken from the system rows in proportion to their size; the rules and the rest stay.
+    expect(rowOf(out, 'Memory files')).toBe(956)
+    expect(rowOf(out, 'MCP tools (deferred)')).toBe(546213)
+    expect(rowOf(out, 'Free space')).toBe(144699)
+    expect(rowOf(out, 'System tools')!).toBeLessThan(42149)
+    expect(rowOf(out, 'System prompt')!).toBeLessThan(7173)
+    expect(42149 - rowOf(out, 'System tools')!).toBeGreaterThan(7173 - rowOf(out, 'System prompt')!)
+  })
+
+  test('Messages at or above characters / 4 is left as the engine gave it', async () => {
+    expect(reconcile(BREAKDOWN, 80_000)).toEqual(BREAKDOWN)
+    expect(reconcile(BREAKDOWN, 4_000)).toEqual(BREAKDOWN)
+  })
+
+  test('with the last response\u2019s input tokens, the used rows add up to them: the system rows take the difference', async () => {
+    // After a cut the estimates add up to more than the response was answered over.
+    const after = reconcile(RESIDUAL, 24_800, 46_000)
+    expect(usedOf(after)).toBe(46_000)
+    expect(rowOf(after, 'Messages')).toBe(6200)
+    expect(rowOf(after, 'Memory files')).toBe(956)
+    // And to more than the estimates when those run low.
+    const grown = reconcile(BREAKDOWN, 4_000, 60_000)
+    expect(usedOf(grown)).toBe(60_000)
+    expect(rowOf(grown, 'Messages')).toBe(20_000)
+    expect(rowOf(grown, 'System tools')!).toBeGreaterThan(12_000)
+  })
+
+  test('the system rows never go below zero: Messages takes at most what they hold', async () => {
+    const small: Category[] = [
+      { name: 'System prompt', tokens: 300, kind: 'used' },
+      { name: 'Messages', tokens: 100, kind: 'used' },
+      { name: 'Free space', tokens: 1000, kind: 'free' },
+    ]
+    const out = reconcile(small, 40_000)
+    expect(rowOf(out, 'System prompt')).toBe(0)
+    expect(rowOf(out, 'Messages')).toBe(400)
   })
 })
 

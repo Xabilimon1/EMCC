@@ -17,6 +17,36 @@ const MESSAGES = 'Messages'
  * kind `buffer` -> reserve; every other used category -> system. `largeShare` is the
  * fraction (0..1) of Messages that large results take (from large.ts); large never exceeds Messages.
  */
+/**
+ * `categories` made to agree with what the engine measured. A summary breakdown estimates its rows
+ * locally and makes Messages what the last response's usage leaves after them; with many tools the
+ * estimates run high, and Messages can come out smaller than one tool result in it. So Messages is
+ * raised to the conversation headspace reads, at characters / 4, and when `liveTokens` (the last
+ * response's input, the status line's figure) is known the used rows add up to it. The system rows
+ * take the difference, in proportion to their size and never below zero; Memory files stay.
+ */
+export function reconcile(categories: Category[], conversationChars: number, liveTokens?: number): Category[] {
+  const messages = categories.find(c => c.kind === 'used' && c.name === MESSAGES)
+  if (messages === undefined) return categories
+  const isSystem = (c: Category) => c.kind === 'used' && c.name !== MESSAGES && c.name !== MEMORY_FILES
+  const systemRows = categories.filter(isSystem)
+  const systemTotal = systemRows.reduce((total, c) => total + c.tokens, 0)
+  const memory = categories.filter(c => c.kind === 'used' && c.name === MEMORY_FILES).reduce((total, c) => total + c.tokens, 0)
+  const target = liveTokens ?? systemTotal + memory + messages.tokens
+  const messageTokens = Math.min(Math.max(messages.tokens, Math.round(conversationChars / 4)), Math.max(0, target - memory))
+  const systemTarget = Math.max(0, target - memory - messageTokens)
+  if (messageTokens === messages.tokens && systemTarget === systemTotal) return categories
+  let left = systemTarget
+  return categories.map(c => {
+    if (c === messages) return { ...c, tokens: messageTokens }
+    if (!isSystem(c)) return c
+    // Floors for all but the last row, which takes what is left, so the rows add up to the target.
+    const tokens = c === systemRows.at(-1) ? left : Math.floor(systemTotal > 0 ? (c.tokens / systemTotal) * systemTarget : 0)
+    left -= tokens
+    return { ...c, tokens }
+  })
+}
+
 export function toSegments(categories: Category[], largeShare: number, sessionRuleTokens: number): HeadspaceSegment[] {
   const tokens: Record<HeadspaceKind, number> = { system: 0, rules: sessionRuleTokens, conversation: 0, large: 0, free: 0, reserve: 0 }
   let messages = 0

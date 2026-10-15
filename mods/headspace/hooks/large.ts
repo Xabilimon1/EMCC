@@ -76,7 +76,8 @@ function messageChars(message: ApiMessage, block: Block): number {
   return message.role === 'user' && isReminder(block) ? 0 : blockChars(block)
 }
 
-function totalChars(messages: readonly ApiMessage[]): number {
+/** The characters the breakdown's Messages counts: every block but the reminders at the top of a user message. */
+export function conversationChars(messages: readonly ApiMessage[]): number {
   let sum = 0
   for (const message of messages) {
     for (const block of message.content) {
@@ -178,7 +179,7 @@ export function largeResults(
   messageTokens: number | null,
   cwd: string,
 ): { results: LargeResult[]; share: number } {
-  const allChars = totalChars(messages)
+  const allChars = conversationChars(messages)
   const calls = callsById(messages)
   // Prompts typed from each message index to the end.
   const promptsFrom: number[] = new Array<number>(messages.length + 1).fill(0)
@@ -249,7 +250,7 @@ export function cacheCost(messages: readonly ApiMessage[], ids: readonly string[
     }
   }
 
-  return toTokens(chars, totalChars(messages), messageTokens)
+  return toTokens(chars, conversationChars(messages), messageTokens)
 }
 
 /** The instructions an apply sends: CUT_PREFIX and the marks as JSON, as headspace-cut's parseCut reads them. */

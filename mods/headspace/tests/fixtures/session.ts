@@ -12,6 +12,8 @@ export type Session = {
   /** The breakdown's window (`rawMaxTokens`) and percentage. */
   window: number
   percent: number
+  /** The last response's input tokens (the status line's figure); undefined until a response, or just after a compaction. */
+  tokens?: number
   /** The live conversation, as `$.session.messages({ as: 'api' })` answers it. */
   api: unknown[]
   /** How many times the breakdown was asked for. */
@@ -72,11 +74,13 @@ export function session(on: On): Session {
   on('session.cwd', () => ({ value: '/repo' }) as never)
   on('session.usage', () => {
     it.usageCalls += 1
+    const live = it.tokens === undefined ? {} : { tokens: it.tokens, percent: Math.round((it.tokens / it.window) * 100) }
     const context =
       it.categories === null
-        ? { window: it.window }
+        ? { window: it.window, ...live }
         : {
             window: it.window,
+            ...live,
             breakdown: {
               categories: it.categories.map(c => ({ ...c, color: 'inactive', isDeferred: c.kind === 'deferred' })),
               totalTokens: it.categories.filter(c => c.kind === 'used').reduce((sum, c) => sum + c.tokens, 0),

@@ -53,6 +53,32 @@ describe('the bar', () => {
     expect(await state($, 'lostAt')).toBeNull()
   })
 
+  test('a Messages figure that leaves the conversation out is raised to it, so a large Read is still large', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    // The residual a session with many tools gets: the 30,000-character Read cannot fit in 500 tokens.
+    it.categories = ROWS.map(r => (r.name === 'Messages' ? { ...r, tokens: 500 } : r.name === 'System tools' ? { ...r, tokens: 21500 } : r))
+    it.api = conversation()
+    await endTurn($)
+    const tokens = Object.fromEntries((await state($, 'snapshot')).segments.map((s: { kind: string; tokens: number }) => [s.kind, s.tokens]))
+    expect(tokens.large).toBeGreaterThan(7000)
+    // What Messages gained came out of system: the used total is the engine's.
+    expect(tokens.system + tokens.rules + tokens.conversation + tokens.large).toBe(3000 + 21500 + 4000 + 500)
+    expect(await command($, 'headspace', 'large')).toContain('opened on large')
+  })
+
+  test('with the last response\u2019s input tokens, the bar and its percentage are the status line\u2019s', WITH_PROBE, async ($, on) => {
+    const it = session(on)
+    it.categories = ROWS
+    it.percent = 15
+    it.tokens = 23_000
+    it.api = conversation()
+    await endTurn($)
+    const snapshot = await state($, 'snapshot')
+    expect(snapshot.percent).toBe(12)
+    const used = snapshot.segments.filter((s: { kind: string }) => s.kind !== 'free' && s.kind !== 'reserve')
+    expect(used.reduce((sum: number, s: { tokens: number }) => sum + s.tokens, 0)).toBe(23_000)
+  })
+
   test('a subagent’s turn end does not refresh', WITH_PROBE, async ($, on) => {
     const it = session(on)
     it.categories = ROWS

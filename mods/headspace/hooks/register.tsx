@@ -12,9 +12,9 @@ import type {
 } from 'claude-code'
 
 import type { HeadspaceFileChanges, HeadspaceKind, HeadspaceRuleChange, HeadspaceSaved, HeadspaceSnapshot } from '../types'
-import { COLOURS, ORDER, fallback, formatTokens, toSegments, widths } from './bar'
+import { COLOURS, ORDER, fallback, formatTokens, reconcile, toSegments, widths } from './bar'
 import type { Category } from './bar'
-import { cacheCost, cutInstructions, label, largeResults } from './large'
+import { cacheCost, conversationChars, cutInstructions, label, largeResults } from './large'
 import type { LargeResult } from './large'
 import { memoryEntries, renderMemory } from './memory'
 import { changeNotes, diffLines, hash, isReflected, noticeBlocks, parseRules, renderRules, shortPath, withoutMarker } from './rules'
@@ -95,8 +95,12 @@ async function refresh($: EngineInterface): Promise<void> {
     return
   }
   const api = await $.session.messages({ as: 'api' })
-  const categories: Category[] = breakdown.categories.map(c => ({ name: c.name, tokens: c.tokens, kind: c.kind }))
-  const messageTokens = breakdown.categories.find(c => c.kind === 'used' && c.name === 'Messages')?.tokens ?? null
+  const categories: Category[] = reconcile(
+    breakdown.categories.map(c => ({ name: c.name, tokens: c.tokens, kind: c.kind })),
+    conversationChars(api),
+    usage.context.tokens,
+  )
+  const messageTokens = categories.find(c => c.kind === 'used' && c.name === 'Messages')?.tokens ?? null
   const { results, share } = largeResults(api, threshold, messageTokens, await $.session.cwd())
   const segments = toSegments(categories, share, tokensOf(await read($, sessionRules)))
   const at = await $.clock.now()
@@ -104,7 +108,7 @@ async function refresh($: EngineInterface): Promise<void> {
   lastLarge = results
   lastCategories = categories
   lastMessageTokens = messageTokens
-  await update($, snapshot, () => ({ segments, window: breakdown.rawMaxTokens, percent: breakdown.percentage, at }))
+  await update($, snapshot, () => ({ segments, window: breakdown.rawMaxTokens, percent: usage.context.percent ?? breakdown.percentage, at }))
   const live = new Set(results.map(r => r.id))
   const marked = await read($, marks)
   if (!marked.every(m => live.has(m.id))) {
