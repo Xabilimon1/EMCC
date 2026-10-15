@@ -61,6 +61,18 @@ The pane is driven from the keyboard, so the scene counts Tabs. The counts were 
 
 The cut points depend on the take: find them by looking at the frames (`ffmpeg -i tapes/out/scene-a.mp4 -vf fps=2 frame%03d.png`).
 
+## Logo
+
+[`logo/`](logo) holds EMCC's sentinel. [`make-logo.py`](logo/make-logo.py) draws it pixel by pixel on a 40 x 36 grid in Anthropic's palette, with two tones of clay for light and shade, and writes the still `sentinel.svg` and the frames of the GIF:
+
+```sh
+python3 docs/media/logo/make-logo.py /tmp/sentinel
+for f in /tmp/sentinel/frames/*.svg; do rsvg-convert -w 160 "$f" -o "${f%.svg}.png"; done
+ffmpeg -framerate 10 -i /tmp/sentinel/frames/%03d.png -vf "split[a][b];[a]palettegen=reserve_transparent=1:max_colors=16:stats_mode=full[p];[b][p]paletteuse=alpha_threshold=128:dither=none" -loop 0 docs/media/logo/sentinel.gif
+```
+
+It is EMCC's own figure, not Claude Code's mascot: that one is Anthropic's, and its trademark guidelines ask for approval before any use.
+
 ## Icons
 
 [`docs/icons`](../icons) holds EMCC's own line icons: 24 px, 1.75 px strokes in `#d97757`, no fills, so they read on GitHub's light and dark themes.
