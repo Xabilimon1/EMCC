@@ -2,7 +2,7 @@
 
     python3 docs/media/logo/make-logo.py OUT_DIR
 
-A 40 x 36 grid in Anthropic's palette (clay, olive, stone, light, dark) and two tones of clay for
+A 40 x 36 figure, padded to 48 x 36 so its body is centred, in Anthropic's palette (clay, olive, stone, light, dark) and two tones of clay for
 light and shade. The sentinel looks left and right, blinks, and raises a sign: a check in olive,
 and now and then a triangle in clay, as witness marks a step proven or flagged.
 """
@@ -21,7 +21,10 @@ PALETTE = {
     'O': '#788c5d',  # olive: the check
     'R': '#d97757',  # clay: the triangle
 }
-WIDTH, HEIGHT = 40, 36
+# The figure is drawn on columns 0 to 39 and its body is centred on 15.5; the sign reaches 38.
+# LEFT pads the left as far as the sign reaches right, so the body sits in the middle of the image.
+LEFT = 8
+WIDTH, HEIGHT = 40 + LEFT, 36
 
 
 def blank():
@@ -29,6 +32,7 @@ def blank():
 
 
 def put(cells, r, c, ch):
+    c += LEFT
     if 0 <= r < HEIGHT and 0 <= c < WIDTH:
         cells[r][c] = ch
 

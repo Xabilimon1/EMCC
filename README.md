@@ -1,4 +1,4 @@
-<p align="center"><img src="docs/media/logo/sentinel.gif" width="160" alt="EMCC's sentinel, a small pixel-art figure in a clay helmet and visor, looks left and right, blinks, and raises a sign with a check, then one with a triangle"></p>
+<p align="center"><img src="docs/media/logo/sentinel.gif" width="192" alt="EMCC's sentinel, a small pixel-art figure in a clay helmet and visor, looks left and right, blinks, and raises a sign with a check, then one with a triangle"></p>
 
 <h1 align="center">EMCC</h1>
 

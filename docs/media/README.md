@@ -63,11 +63,11 @@ The cut points depend on the take: find them by looking at the frames (`ffmpeg -
 
 ## Logo
 
-[`logo/`](logo) holds EMCC's sentinel. [`make-logo.py`](logo/make-logo.py) draws it pixel by pixel on a 40 x 36 grid in Anthropic's palette, with two tones of clay for light and shade, and writes the still `sentinel.svg` and the frames of the GIF:
+[`logo/`](logo) holds EMCC's sentinel. [`make-logo.py`](logo/make-logo.py) draws it pixel by pixel on a 40 x 36 grid, padded to 48 so its body sits in the middle, in Anthropic's palette, with two tones of clay for light and shade, and writes the still `sentinel.svg` and the frames of the GIF:
 
 ```sh
 python3 docs/media/logo/make-logo.py /tmp/sentinel
-for f in /tmp/sentinel/frames/*.svg; do rsvg-convert -w 160 "$f" -o "${f%.svg}.png"; done
+for f in /tmp/sentinel/frames/*.svg; do rsvg-convert -w 192 "$f" -o "${f%.svg}.png"; done
 ffmpeg -framerate 10 -i /tmp/sentinel/frames/%03d.png -vf "split[a][b];[a]palettegen=reserve_transparent=1:max_colors=16:stats_mode=full[p];[b][p]paletteuse=alpha_threshold=128:dither=none" -loop 0 docs/media/logo/sentinel.gif
 ```
 
