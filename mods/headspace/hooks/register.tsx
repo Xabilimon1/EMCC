@@ -34,6 +34,7 @@ const pending = atom({ plugin: 'headspace', key: 'pending' } as const, [])
 const applied = atom({ plugin: 'headspace', key: 'applied' } as const, [])
 const sessionRules = atom({ plugin: 'headspace', key: 'sessionRules' } as const, [])
 const pendingSessionRules = atom({ plugin: 'headspace', key: 'pendingSessionRules' } as const, null)
+const droppedSessionRules = atom({ plugin: 'headspace', key: 'droppedSessionRules' } as const, [])
 const marks = atom({ plugin: 'headspace', key: 'marks' } as const, [])
 const staleCount = atom({ plugin: 'headspace', key: 'staleCount' } as const, 0)
 const selected = atom({ plugin: 'headspace', key: 'selected' } as const, 'rules')
@@ -167,6 +168,11 @@ async function removeSessionRule($: EngineInterface, index: number): Promise<voi
   await update($, pendingSessionRules, () => base.filter((_, at) => at !== index))
 }
 
+/** The session rules named as off once `after` replaces `before`: the ones taken out, less any added back. */
+function droppedAfter(dropped: readonly string[], before: readonly string[], after: readonly string[]): string[] {
+  return [...dropped, ...before.filter(rule => !dropped.includes(rule))].filter(rule => !after.includes(rule))
+}
+
 /** Pending's rule lists replace applied's, rule by rule; an empty list takes the rule's changes away. */
 function merged(inForce: readonly HeadspaceFileChanges[], waiting: readonly HeadspaceFileChanges[]): HeadspaceFileChanges[] {
   const bySource = new Map<string, Record<string, HeadspaceRuleChange[]>>()
@@ -201,6 +207,9 @@ async function applyRules($: EngineInterface): Promise<number> {
     await update($, pending, () => [])
   }
   if (rules !== null) {
+    const before = await read($, sessionRules)
+    const dropped = await read($, droppedSessionRules)
+    await update($, droppedSessionRules, () => droppedAfter(dropped, before, rules))
     await update($, sessionRules, () => rules)
     await update($, pendingSessionRules, () => null)
   }
@@ -381,9 +390,10 @@ function sessionRulesText(rules: readonly string[]): string {
  * in the order the engine renders them, then the auto-memory entries. After an
  * Apply the engine leaves the first message as it was, old rules included, and
  * sends the context again in the next one: Claude reads both, and these blocks
- * say which holds. A rule the files no longer have is not named.
+ * say which holds. A rule the files no longer have is not named. Session rules
+ * taken out are named as off too, after the files' rules.
  */
-function noticesFor(files: readonly InstructionFile[] | undefined, memory: string | null, changes: readonly HeadspaceFileChanges[]): PromptContextBlock[] {
+function noticesFor(files: readonly InstructionFile[] | undefined, memory: string | null, changes: readonly HeadspaceFileChanges[], dropped: readonly string[]): PromptContextBlock[] {
   const notes: ChangeNotes = { off: [], edits: [] }
   for (const file of files ?? []) {
     const own = changes.find(f => f.source === file.path)
@@ -399,6 +409,7 @@ function noticesFor(files: readonly InstructionFile[] | undefined, memory: strin
       notes.off.push(withoutMarker(entry.line))
     }
   }
+  notes.off.push(...dropped)
 
   return noticeBlocks(notes)
 }
@@ -1059,7 +1070,8 @@ async function rulesBody($: EngineInterface, { Box, Text, Button }: Els, Input: 
   // What an Apply costs: the engine leaves the first message as it was and sends the context again
   // in the next one, so the claudeMd block, headspace's notes and the session rules, at characters
   // over four. An auto-memory change rewrites the system prompt, and everything after it is cached again.
-  const sent = lastClaudeMdChars + noticesFor(lastFiles, lastMemory, merged(inForce, waiting)).reduce((sum, b) => sum + b.text.length, 0) + (rules.length > 0 ? sessionRulesText(rules).length : 0)
+  const dropped = droppedAfter(await read($, droppedSessionRules), await read($, sessionRules), rules)
+  const sent = lastClaudeMdChars + noticesFor(lastFiles, lastMemory, merged(inForce, waiting), dropped).reduce((sum, b) => sum + b.text.length, 0) + (rules.length > 0 ? sessionRulesText(rules).length : 0)
   const used = (shot?.segments ?? []).filter(s => s.kind !== 'free' && s.kind !== 'reserve').reduce((sum, s) => sum + s.tokens, 0)
   const cost = `adds ~${formatTokens(Math.round(sent / 4))} to the next message` + (waiting.some(f => f.source === MEMORY) ? `, rewrites ~${formatTokens(used)} of cache` : '')
   /** Whether each group's file has a save to undo: only files headspace may write. */
@@ -1370,7 +1382,8 @@ export const register: Register = (on, options) => {
       const inForce = all.filter(f => f.source !== MEMORY)
       const own = await read($, sessionRules)
       const rules = [...own, ...carried.filter(rule => !own.includes(rule))]
-      if (all.length === 0 && rules.length === 0) {
+      const dropped = await read($, droppedSessionRules)
+      if (all.length === 0 && rules.length === 0 && dropped.length === 0) {
         return core
       }
       let blocks: PromptContextBlock[] = [...core.blocks]
@@ -1387,7 +1400,7 @@ export const register: Register = (on, options) => {
         }
       }
       // Read after the rewrite, which drops the changes that no longer apply.
-      const notices = noticesFor(e.instructionFiles, lastMemory, await read($, applied))
+      const notices = noticesFor(e.instructionFiles, lastMemory, await read($, applied), dropped)
       blocks = [...blocks.filter(b => !OWN_BLOCKS.includes(b.name)), ...notices, ...(rules.length > 0 ? [{ name: SESSION_RULES, text: sessionRulesText(rules) }] : [])]
 
       return { ...core, blocks }

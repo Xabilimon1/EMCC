@@ -1,6 +1,6 @@
 {
   "name": "headspace",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "What Claude carries, in colour: a bar above the prompt with system, rules, conversation and large tool results, and a pane to turn rules off for the session, edit and save them, and take out large results.",
   "author": { "name": "Xabilimon1", "url": "https://github.com/Xabilimon1" },
   "repository": "https://github.com/Xabilimon1/emcc-claude-code-mods",

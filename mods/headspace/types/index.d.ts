@@ -43,6 +43,8 @@ declare module 'claude-code' {
       sessionRules: string[]
       /** Session rules waiting for Apply (added or removed since the last Apply). */
       pendingSessionRules: string[] | null
+      /** Session rules taken out by an Apply: the first message still holds them, so they are named as off. */
+      droppedSessionRules: string[]
       marks: HeadspaceMark[]
       /** Changes dropped because their file changed on disk. */
       staleCount: number

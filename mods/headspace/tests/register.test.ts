@@ -288,6 +288,31 @@ describe('the rules turned off or changed, said again', () => {
     expect((await context($)).blocks.map(b => b.name)).toEqual(['claudeMd', 'currentDate'])
   })
 
+  test('a session rule taken out and applied is named as off until it is added again', WITH_PROBE, async ($, on) => {
+    session(on)
+    await seed($, 'sessionRules', ['Answer briefly', 'Reply in French'])
+    await context($)
+    await seed($, 'pendingSessionRules', ['Answer briefly'])
+    await command($, 'headspace', 'apply')
+    let r = await context($)
+    expect(r.blocks.slice(2)).toEqual([
+      { name: 'turnedOff', text: `${OFF_HEAD}\n- Reply in French` },
+      { name: 'sessionRules', text: 'Session rules the person set for this session:\n- Answer briefly' },
+    ])
+    // The last one out leaves no session rules block, and the note stays.
+    await seed($, 'pendingSessionRules', [])
+    await command($, 'headspace', 'apply')
+    r = await context($)
+    expect(r.blocks.slice(2)).toEqual([{ name: 'turnedOff', text: `${OFF_HEAD}\n- Reply in French\n- Answer briefly` }])
+    await seed($, 'pendingSessionRules', ['Reply in French'])
+    await command($, 'headspace', 'apply')
+    r = await context($)
+    expect(r.blocks.slice(2)).toEqual([
+      { name: 'turnedOff', text: `${OFF_HEAD}\n- Answer briefly` },
+      { name: 'sessionRules', text: 'Session rules the person set for this session:\n- Reply in French' },
+    ])
+  })
+
   test('an auto-memory entry turned off is named too', WITH_PROBE, async ($, on) => {
     session(on)
     const kali = memoryEntries(MEMORY_SECTION).find(m => m.title === 'Kali')?.id ?? ''
