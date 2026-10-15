@@ -1,4 +1,4 @@
-"""EMCC's sentinel, drawn pixel by pixel: writes sentinel.svg (still) and the frames of the GIF.
+"""EMCC's sentinel, drawn pixel by pixel: writes emcc-sentinel.svg (still) and the frames of the GIF.
 
     python3 docs/media/logo/make-logo.py OUT_DIR
 
@@ -159,7 +159,7 @@ if __name__ == '__main__':
     out = sys.argv[1]
     frames = os.path.join(out, 'frames')
     os.makedirs(frames, exist_ok=True)
-    open(os.path.join(out, 'sentinel.svg'), 'w').write(svg(grid('centre', 'check'), scale=4))
+    open(os.path.join(out, 'emcc-sentinel.svg'), 'w').write(svg(grid('centre', 'check'), scale=4))
     n = 0
     for where, glyph, count in LOOP:
         for _ in range(count):
